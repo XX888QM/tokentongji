@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- 模板：__APP_DIR__ 由 scripts/install-launchd.sh 在安装时替换为项目绝对路径。
+     可手动改：把 __APP_DIR__ 全部替换成本项目目录，再放到 ~/Library/LaunchAgents/ 下 load。 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.yunxin.tokenstat</string>
+    <string>com.tokentongji</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -13,12 +15,12 @@
     </array>
 
     <key>WorkingDirectory</key>
-    <string>/Users/yunxin/Desktop/开发/token统计</string>
+    <string>__APP_DIR__</string>
 
     <key>EnvironmentVariables</key>
     <dict>
         <key>PYTHONPATH</key>
-        <string>/Users/yunxin/Desktop/开发/token统计/src</string>
+        <string>__APP_DIR__/src</string>
         <key>TOKENSTAT_PORT</key>
         <string>8787</string>
     </dict>
@@ -30,9 +32,9 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/yunxin/Desktop/开发/token统计/data/tokenstat.log</string>
+    <string>__APP_DIR__/data/tokenstat.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/yunxin/Desktop/开发/token统计/data/tokenstat.err.log</string>
+    <string>__APP_DIR__/data/tokenstat.err.log</string>
 </dict>
 </plist>

@@ -14,8 +14,11 @@
 
 ## 快速开始
 
+需要 Python 3.9+（标准库即可，**无需 pip install**）。
+
 ```bash
-cd "/Users/yunxin/Desktop/开发/token统计"
+git clone https://github.com/<your-account>/tokentongji.git
+cd tokentongji
 
 # 1) 先全量入库一次（首次约 9 秒）
 PYTHONPATH=src python3 -m tokenstat.ingest
@@ -29,21 +32,20 @@ open http://127.0.0.1:8787
 
 ## 仪表盘内容
 
-- 顶部卡片：今日 / 本周 / 本月 总 token + 估算费用，Claude/Codex 分列
+- 顶部卡片：今日 / 本周 / 本月 / 今年 总 token + 估算费用，Claude/Codex 分列
+- 数字按 万 / 百万 / 千万 / 亿 显示，悬停看精确值
 - 折线图：近 30 天每日 token 趋势（Claude vs Codex）
-- 拆分表：按 model、按项目（cwd）的 token + 费用排行，cache token 单列
+- 拆分表：按 model、按项目（cwd）的 token + 费用排行，cache token 单列，可切今日/本周/本月/今年
 - 每 30s 自动刷新
 
 ## 开机自启（launchd）
 
 ```bash
-# 安装（拷贝 plist 到 LaunchAgents 并加载）
-cp launchd/com.yunxin.tokenstat.plist ~/Library/LaunchAgents/
-launchctl load -w ~/Library/LaunchAgents/com.yunxin.tokenstat.plist
+# 安装（自动用当前项目路径生成 plist 并加载）
+bash scripts/install-launchd.sh
 
 # 卸载
-launchctl unload -w ~/Library/LaunchAgents/com.yunxin.tokenstat.plist
-rm ~/Library/LaunchAgents/com.yunxin.tokenstat.plist
+bash scripts/uninstall-launchd.sh
 ```
 
 日志：`data/tokenstat.log` / `data/tokenstat.err.log`

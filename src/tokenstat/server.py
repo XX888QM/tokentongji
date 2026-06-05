@@ -109,7 +109,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(data)
 
     def _api_breakdown(self, period: str):
-        if period not in ("today", "week", "month"):
+        if period not in ("today", "week", "month", "year"):
             self._send_json({"error": f"bad period: {period}"}, status=400)
             return
         conn = self._conn()

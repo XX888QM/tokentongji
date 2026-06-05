@@ -32,6 +32,9 @@ def period_range(period: str, today: Optional[date] = None) -> tuple[str, str]:
     if period == "month":
         first = t.replace(day=1)
         return first.isoformat(), t.isoformat()
+    if period == "year":
+        first = t.replace(month=1, day=1)
+        return first.isoformat(), t.isoformat()
     raise ValueError(f"未知 period: {period!r}")
 
 
@@ -104,6 +107,7 @@ def summary(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
             "today": _period_summary(conn, "today", pricing),
             "week": _period_summary(conn, "week", pricing),
             "month": _period_summary(conn, "month", pricing),
+            "year": _period_summary(conn, "year", pricing),
         },
         "pricing_note": pricing_mod.pricing_note(pricing),
     }

@@ -19,9 +19,13 @@ class TestPeriodRange(unittest.TestCase):
         t = date(2026, 6, 6)
         self.assertEqual(aggregate.period_range("month", t), ("2026-06-01", "2026-06-06"))
 
+    def test_year(self):
+        t = date(2026, 6, 6)
+        self.assertEqual(aggregate.period_range("year", t), ("2026-01-01", "2026-06-06"))
+
     def test_bad_period(self):
         with self.assertRaises(ValueError):
-            aggregate.period_range("year")
+            aggregate.period_range("decade")
 
 
 class TestAggregateQueries(unittest.TestCase):
@@ -50,6 +54,8 @@ class TestAggregateQueries(unittest.TestCase):
         s = aggregate.summary(self.conn, self.pricing)
         # 今日总量 = 1M + 2M + 0.6M
         self.assertEqual(s["periods"]["today"]["total"], 3_600_000)
+        # 今年应包含今日数据
+        self.assertEqual(s["periods"]["year"]["total"], 3_600_000)
         self.assertEqual(s["periods"]["today"]["by_source"]["claude"]["total"], 3_000_000)
         self.assertEqual(s["periods"]["today"]["by_source"]["codex"]["total"], 600_000)
 
