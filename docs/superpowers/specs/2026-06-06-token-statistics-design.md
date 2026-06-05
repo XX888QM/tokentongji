@@ -136,3 +136,20 @@ tests/  (claude/codex 解析、ingest 幂等、aggregate、pricing；目标 80%+
 - 不调外部 API、不联网拉价（单价写死可配）
 - 不做多用户 / 鉴权（本地个人工具）
 - 不做实时秒级 tail（60s 增量足够）
+
+## 13. 侦察驱动的关键修订（实现后回填）
+
+6 路并行侦察（见 wf tokenstat-recon）揪出 3 个会让统计翻倍的坑，方案据此修订：
+
+| 修订点 | 原设计 | 实测真相 → 最终做法 |
+|--------|--------|--------------------|
+| Claude 去重 | 按 (file,line) 逐行求和 | 同一 `message.id` 拆 thinking/text/tool_use 多行、usage 重复，裸求和高估 2.6~3x → **去重键 = message.id（全局唯一），取 output 最大代表条** |
+| Codex 取数 | last_token_usage 增量求和 | 事件成对重发 + last 含完整 context，`sum(last)≈2×total` → **对单调累积 `total_token_usage` 做相邻差分**；input 子字段在 compaction 时回落，故用 `d_input = d_total − d_output` 锚定单调 total |
+| Codex cwd/model | session_meta.cwd | 36/270 meta.cwd 被 restore 改写成假路径 → **优先 turn_context.cwd / turn_context.model，carry-forward；缺失回退 config.toml 默认** |
+| Claude 项目 | 解会话目录名 | 目录名把 `/`、`-`、中文塌缩、多对一不可逆 → **用顶层 `cwd` 绝对路径分组，basename 显示** |
+| 维度 | 无 | 新增 `category`：main / subagent(isSidechain 或 /subagents/workflows/) / observer(.claude-mem) |
+| 去重键 | (source_file,line_no) | Claude=message.id（on_conflict=max）；Codex=`file#offset`（ignore） |
+| 单价 | 简单 models{} | 嵌套 anthropic/openai + cache_write_5m/1h；归一化 strip 前后缀 + 家族匹配；未知 fail-loud |
+
+**验收对账（独立脚本重算 vs DB）**：Claude 845,686,049 == 845,686,049（0.000%）；
+Codex 5,853,700,062 == 5,853,700,062（0.000%）。52 个单元测试全过。

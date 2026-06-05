@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Token 统计 · Claude / Codex</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Token 统计</h1>
+    <div class="meta" id="meta">加载中…</div>
+  </header>
+
+  <section class="cards" id="cards">
+    <!-- 卡片由 JS 填充：今日 / 本周 / 本月 -->
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>近 30 天每日 token 趋势</h2>
+      <div class="legend">
+        <span class="dot claude"></span>Claude
+        <span class="dot codex"></span>Codex
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="dailyChart"></canvas>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>拆分明细</h2>
+      <div class="period-toggle" id="periodToggle">
+        <button data-period="today">今日</button>
+        <button data-period="week">本周</button>
+        <button data-period="month" class="active">本月</button>
+      </div>
+    </div>
+    <div class="tables">
+      <div class="table-block">
+        <h3>按模型</h3>
+        <table id="modelTable">
+          <thead>
+            <tr><th>模型</th><th>来源</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存读</th><th class="num">缓存写</th><th class="num">合计</th><th class="num">费用($)</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="table-block">
+        <h3>按项目</h3>
+        <table id="projectTable">
+          <thead>
+            <tr><th>项目</th><th>来源</th><th class="num">合计 token</th><th class="num">费用($)</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <span id="pricingNote"></span>
+  </footer>
+
+  <script src="/static/chart.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
