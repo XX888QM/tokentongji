@@ -135,16 +135,16 @@ async function loadDaily() {
           titleColor: '#f5ece2',
           bodyColor: '#9c8d7e',
           padding: 10,
-          titleFont: { family: "'JetBrains Mono', monospace" },
-          bodyFont: { family: "'JetBrains Mono', monospace" },
+          titleFont: { family: "-apple-system, 'PingFang SC', system-ui, sans-serif" },
+          bodyFont: { family: "-apple-system, 'PingFang SC', system-ui, sans-serif" },
           callbacks: {
             label: (c) => `  ${c.dataset.label}: ${fmtCN(c.parsed.y)} (${fmt(c.parsed.y)})`,
           },
         },
       },
       scales: {
-        x: { grid: { color: 'rgba(44,33,27,0.6)' }, ticks: { color: '#6d5f53', font: { family: "'JetBrains Mono', monospace", size: 10 }, maxTicksLimit: 12 } },
-        y: { grid: { color: 'rgba(44,33,27,0.6)' }, ticks: { color: '#6d5f53', font: { family: "'JetBrains Mono', monospace", size: 10 }, callback: (v) => fmtCN(v) } },
+        x: { grid: { color: 'rgba(44,33,27,0.6)' }, ticks: { color: '#6d5f53', font: { family: "-apple-system, 'PingFang SC', system-ui, sans-serif", size: 10 }, maxTicksLimit: 12 } },
+        y: { grid: { color: 'rgba(44,33,27,0.6)' }, ticks: { color: '#6d5f53', font: { family: "-apple-system, 'PingFang SC', system-ui, sans-serif", size: 10 }, callback: (v) => fmtCN(v) } },
       },
     },
   };

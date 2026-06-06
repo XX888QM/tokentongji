@@ -1,26 +1,5 @@
 /* ===== Furnace Ledger — Token 统计 ===== */
 
-@font-face {
-  font-family: 'Instrument Serif';
-  font-style: normal; font-weight: 400; font-display: swap;
-  src: url('/static/fonts/instrument-serif-400.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal; font-weight: 400; font-display: swap;
-  src: url('/static/fonts/jetbrains-mono-400.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal; font-weight: 500; font-display: swap;
-  src: url('/static/fonts/jetbrains-mono-500.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal; font-weight: 700; font-display: swap;
-  src: url('/static/fonts/jetbrains-mono-700.woff2') format('woff2');
-}
-
 :root {
   --bg: #0c0a09;
   --surface: #17120f;
@@ -37,8 +16,10 @@
   --claude: #e8794f;
   --codex: #46b596;
 
-  --serif: 'Instrument Serif', 'Songti SC', Georgia, serif;
-  --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* 正常系统字体（无衬线），数字用 tabular-nums 对齐 */
+  --ui: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", system-ui, "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --serif: var(--ui);
+  --mono: var(--ui);
 }
 
 * { box-sizing: border-box; }
@@ -106,8 +87,8 @@ body::before {
   animation: flicker 4s ease-in-out infinite;
 }
 .brand-text h1 {
-  font-family: var(--serif);
-  font-size: 30px; font-weight: 400; margin: 0; line-height: 1;
+  font-family: var(--ui);
+  font-size: 26px; font-weight: 600; margin: 0; line-height: 1;
   letter-spacing: 0.01em;
 }
 .brand-sub {
@@ -135,10 +116,12 @@ body::before {
   color: var(--muted); margin-bottom: 6px;
 }
 .hero-number {
-  font-family: var(--serif);
-  font-size: clamp(68px, 13vw, 176px);
-  line-height: 0.84;
-  letter-spacing: -0.015em;
+  font-family: var(--ui);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(60px, 11vw, 148px);
+  line-height: 0.9;
+  letter-spacing: -0.02em;
   background: linear-gradient(94deg, var(--ember-1), var(--ember-2) 48%, var(--ember-3));
   background-size: 200% 100%;
   -webkit-background-clip: text; background-clip: text;
@@ -199,8 +182,9 @@ body::before {
   color: var(--muted); margin-bottom: 12px;
 }
 .stat .s-total {
-  font-family: var(--serif); font-size: 42px; line-height: 1;
-  color: var(--text); letter-spacing: -0.01em;
+  font-family: var(--ui); font-size: 34px; line-height: 1;
+  font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--text); letter-spacing: -0.015em;
 }
 .stat .s-cost { color: var(--ember-1); font-size: 12px; margin-top: 6px; }
 .stat .s-split {
@@ -224,7 +208,7 @@ body::before {
   margin-bottom: 20px;
 }
 .panel-head h2 {
-  font-family: var(--serif); font-size: 22px; font-weight: 400; margin: 0;
+  font-family: var(--ui); font-size: 18px; font-weight: 600; margin: 0;
   letter-spacing: 0.01em;
 }
 .legend { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 4px; letter-spacing: 0.05em; }
