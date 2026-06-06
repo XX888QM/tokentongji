@@ -124,6 +124,21 @@ def rates_for_model(model: str, pricing: dict, cache_window: str = "5m") -> dict
     }
 
 
+def is_unknown_model(model: str, pricing: dict) -> bool:
+    """判断模型是否缺少明确价格规则；不写入全局 unknown 状态。"""
+    if not model or model == "<synthetic>":
+        return False
+    models = _merged_models(pricing)
+    default = pricing.get("default", {})
+    clean = _clean_model(model)
+    if clean in models:
+        return False
+    for cand in models:
+        if clean.startswith(cand):
+            return False
+    return _family_rates(clean, models, default) is None
+
+
 def cost_for(
     model: str,
     input_tokens: int = 0,

@@ -9,6 +9,9 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 //   P = { total, cost_usd, by_source: { claude:{total,cost_usd}, codex:{total,cost_usd} } }
 // GET /api/daily?days=30           -> { days: [ {date, claude, codex} ] }
 // GET /api/breakdown?period=...    -> { period, by_model:[...], by_project:[...] }
+// GET /api/audit                   -> { status, meta, sources, ingest_state, issues, ... }
+// GET /api/insights                -> { metrics, cards }
+// GET /api/session_detail?...      -> { summary, groups, by_date, source_files }
 // ===============================================================
 
 let dailyChart = null;
@@ -23,6 +26,7 @@ function saveSettings() {
   const cfg = {
     daily_cost: parseFloat(document.getElementById('alertCost').value) || 0,
     daily_tokens: (parseFloat(document.getElementById('alertTokens').value) || 0) * 1e4,
+    desktop_notify: document.getElementById('desktopNotify').checked,
   };
   localStorage.setItem('tokenstat_alert', JSON.stringify(cfg));
   toggleSettings();
@@ -35,6 +39,7 @@ function toggleSettings() {
     const cfg = loadAlertConfig();
     document.getElementById('alertCost').value = cfg.daily_cost || '';
     document.getElementById('alertTokens').value = cfg.daily_tokens ? cfg.daily_tokens / 1e4 : '';
+    document.getElementById('desktopNotify').checked = !!cfg.desktop_notify;
   }
   m.style.display = isOpen ? 'none' : 'flex';
 }
@@ -53,9 +58,11 @@ function checkAlert(todayData) {
     msgs.push(`今日 Token ${fmtCN(todayData.total)} 已达告警阈值 ${fmtCN(cfg.daily_tokens)}`);
   const bar = document.getElementById('alertBar');
   if (msgs.length) {
-    document.getElementById('alertMsg').textContent = msgs.join(' · ');
+    const msg = msgs.join(' · ');
+    document.getElementById('alertMsg').textContent = msg;
     bar.style.display = 'flex';
     document.body.classList.add('has-alert');
+    maybeNotifyAlert(msg);
   } else {
     bar.style.display = 'none';
     document.body.classList.remove('has-alert');
@@ -103,6 +110,29 @@ async function getJSON(url) {
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
   return res.json();
+}
+
+async function postJSON(url, payload) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Tokenstat-Action': 'notify' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
+  return res.json();
+}
+
+async function maybeNotifyAlert(message) {
+  const cfg = loadAlertConfig();
+  if (!cfg.desktop_notify) return;
+  const key = 'tokenstat_notify_' + message;
+  if (sessionStorage.getItem(key)) return;
+  sessionStorage.setItem(key, '1');
+  try {
+    await postJSON('/api/notify', { kind: 'alert', message });
+  } catch (_) {
+    // 页面告警仍然有效，本地通知失败不打断刷新。
+  }
 }
 
 // ---- HERO（今日）----
@@ -219,19 +249,123 @@ async function loadDaily() {
 const badge = (src) => `<span class="badge ${src}">${src}</span>`;
 // 模型名去掉末尾日期后缀（如 -20251001），更清爽
 const modelDisplay = (m) => (m || '').replace(/-\d{6,8}$/, '');
+const shortPath = (p) => {
+  const s = String(p || '');
+  if (s.length <= 58) return s;
+  return '…' + s.slice(-57);
+};
+
+function kv(label, value, title = '') {
+  return `<div class="kv"><span>${esc(label)}</span><strong title="${esc(title || value)}">${esc(value)}</strong></div>`;
+}
+
+function issueBadge(issue) {
+  const level = issue.level || 'info';
+  return `<div class="issue ${level}">${esc(issue.message || issue)}</div>`;
+}
+
+async function loadAudit() {
+  const a = await getJSON('/api/audit');
+  const status = document.getElementById('auditStatus');
+  status.textContent = a.status === 'ok' ? '正常' : '需关注';
+  status.className = 'status-pill ' + (a.status || 'ok');
+  const sources = [];
+  for (const s of (a.sources || [])) {
+    sources.push(kv(s.source, `${fmtCN(s.total)} / ${fmt(s.records)} 条`));
+  }
+  document.getElementById('auditSources').innerHTML =
+    sources.join('') || '<div class="empty">暂无数据源记录</div>';
+  const ingest = a.ingest_state || {};
+  document.getElementById('auditIngest').innerHTML =
+    kv('事件总数', fmt(a.meta?.total_events || 0)) +
+    kv('日期范围', (a.meta?.date_range || []).filter(Boolean).join(' → ') || '暂无') +
+    kv('跟踪文件', fmt(ingest.files || 0)) +
+    kv('最近入库', ingest.latest_mtime_local || '暂无') +
+    kv('DB 大小', fmtCN(a.db?.size_bytes || 0) + 'B', fmt(a.db?.size_bytes || 0) + ' bytes');
+  const issueHtml = (a.issues || []).map(issueBadge).join('');
+  const unknown = (a.unknown_models || []).slice(0, 5)
+    .map((m) => `<div class="issue warn">未知模型：${esc(modelDisplay(m))}</div>`).join('');
+  document.getElementById('auditIssues').innerHTML =
+    issueHtml + unknown || '<div class="issue ok">未发现明显口径风险</div>';
+}
+
+async function loadInsights() {
+  const data = await getJSON('/api/insights');
+  document.getElementById('insightDate').textContent = data.date || '今日';
+  document.getElementById('insightCards').innerHTML =
+    (data.cards || []).map((c) => `
+      <div class="insight-card ${esc(c.level || 'info')}">
+        <div class="insight-title">${esc(c.title)}</div>
+        <div class="insight-body">${esc(c.body)}</div>
+      </div>`).join('') || '<div class="empty">暂无可分析数据</div>';
+}
 
 async function loadTopSessions() {
   const b = await getJSON(`/api/top_sessions?period=${currentPeriod}&limit=10`);
   document.querySelector('#topSessionsTable tbody').innerHTML =
     b.sessions.map((r, i) => `<tr>
       <td class="num">${i + 1}</td>
-      <td>${esc(r.date)}</td>
+      <td><button class="session-link" data-session="${esc(r.session_id)}">${esc(r.date)}</button></td>
       <td>${esc(r.project) || '(未知)'}</td>
       <td>${esc(modelDisplay(r.model))}</td>
       <td>${badge(esc(r.source))}</td>
       ${numCell(r.total)}
       <td class="num">${fmtCost(r.cost_usd)}</td>
     </tr>`).join('') || '<tr><td colspan="7">暂无数据</td></tr>';
+}
+
+async function loadSessionDetail(sessionId) {
+  const target = document.getElementById('sessionDetail');
+  target.hidden = false;
+  target.innerHTML = '<div class="empty">加载会话明细中…</div>';
+  try {
+    const d = await getJSON(`/api/session_detail?period=${currentPeriod}&session_id=${encodeURIComponent(sessionId)}`);
+    const summary = d.summary || {};
+    const groupRows = (d.groups || []).map((g) => `
+      <tr>
+        <td>${badge(esc(g.source))}</td>
+        <td>${esc(modelDisplay(g.model))}</td>
+        <td title="${esc(g.cwd)}">${esc(g.project)}</td>
+        ${numCell(g.input)}${numCell(g.output)}${numCell(g.cache_read)}${numCell(g.cache_creation)}${numCell(g.total)}
+        <td class="num">${fmtCost(g.cost_usd)}</td>
+      </tr>`).join('') || '<tr><td colspan="8">暂无分组</td></tr>';
+    const fileRows = (d.source_files || []).map((f) => `
+      <tr>
+        <td title="${esc(f.source_file)}">${esc(shortPath(f.source_file))}</td>
+        ${numCell(f.total)}
+        <td class="num">${fmt(f.records)}</td>
+      </tr>`).join('') || '<tr><td colspan="3">暂无文件</td></tr>';
+    target.innerHTML = `
+      <div class="session-head">
+        <div>
+          <div class="session-title">会话明细</div>
+          <div class="session-id" title="${esc(d.session_id)}">${esc(d.session_id)}</div>
+        </div>
+        <button class="mini-btn" id="closeSessionDetail">关闭</button>
+      </div>
+      <div class="session-summary">
+        ${kv('总量', fmtCN(summary.total || 0), fmt(summary.total || 0))}
+        ${kv('费用', fmtCost(summary.cost_usd || 0))}
+        ${kv('记录', fmt(summary.records || 0))}
+        ${kv('日期', `${summary.first_date || '-'} → ${summary.last_date || '-'}`)}
+      </div>
+      <div class="session-tables">
+        <div class="table-block">
+          <h3>模型 / 项目拆分</h3>
+          <table><thead><tr><th>源</th><th>模型</th><th>项目</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存读</th><th class="num">缓存写</th><th class="num">合计</th><th class="num">费用</th></tr></thead><tbody>${groupRows}</tbody></table>
+        </div>
+        <div class="table-block">
+          <h3>来源文件</h3>
+          <table><thead><tr><th>文件</th><th class="num">合计</th><th class="num">记录</th></tr></thead><tbody>${fileRows}</tbody></table>
+        </div>
+      </div>`;
+    document.getElementById('closeSessionDetail').addEventListener('click', () => {
+      target.hidden = true;
+      target.innerHTML = '';
+    });
+  } catch (e) {
+    target.innerHTML = `<div class="issue warn">会话明细加载失败：${esc(e.message)}</div>`;
+  }
 }
 
 async function loadBreakdown() {
@@ -262,7 +396,7 @@ async function loadBreakdown() {
 async function refreshAll() {
   try {
     const sec = await loadSummary();
-    await Promise.all([loadDaily(), loadBreakdown(), loadTopSessions()]);
+    await Promise.all([loadDaily(), loadBreakdown(), loadTopSessions(), loadAudit(), loadInsights()]);
     return sec;
   } catch (e) {
     document.getElementById('meta').textContent = '加载失败: ' + e.message;
@@ -279,11 +413,22 @@ function setupPeriodToggle() {
     currentPeriod = btn.dataset.period;
     loadBreakdown();
     loadTopSessions();
+    document.getElementById('sessionDetail').hidden = true;
+    document.getElementById('sessionDetail').innerHTML = '';
+  });
+}
+
+function setupTopSessionDrilldown() {
+  document.getElementById('topSessionsTable').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-session]');
+    if (!btn) return;
+    loadSessionDetail(btn.dataset.session);
   });
 }
 
 async function main() {
   setupPeriodToggle();
+  setupTopSessionDrilldown();
   const sec = await refreshAll();
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(refreshAll, (sec || 30) * 1000);

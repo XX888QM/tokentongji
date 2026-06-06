@@ -1,9 +1,14 @@
 import time
 import unittest
-from datetime import date
+from datetime import date, datetime
+from unittest.mock import patch
 
 from tokenstat import aggregate, db, pricing
-from tokenstat.models import UsageRecord
+from tokenstat.models import _LOCAL_TZ, UsageRecord
+
+
+def _ts(day: str) -> int:
+    return int(datetime.fromisoformat(day).replace(tzinfo=_LOCAL_TZ).timestamp())
 
 
 class TestPeriodRange(unittest.TestCase):
@@ -117,6 +122,70 @@ class TestTopSessions(unittest.TestCase):
         self.assertEqual(s['source'], 'codex')
         self.assertEqual(s['project'], 'project-big')
         self.assertEqual(s['total'], 101)
+
+
+class TestAuditAndInsights(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.get_conn(":memory:")
+        db.init_db(self.conn)
+        self.pricing = {'default': {'input': 1, 'output': 1, 'cache_read': 1,
+                                    'cache_write_5m': 1, 'cache_write_1h': 1},
+                        'anthropic': {}, 'openai': {}}
+        db.insert_records(self.conn, [
+            UsageRecord(ts=_ts("2026-06-05"), source="claude", model="known",
+                        project="/tmp/a", input_tokens=10, total_tokens=10,
+                        session_id="s1", dedup_key="a1"),
+            UsageRecord(ts=_ts("2026-06-06"), source="codex", model="known",
+                        project="/tmp/b", input_tokens=100, output_tokens=20,
+                        total_tokens=120, session_id="s2", dedup_key="b1"),
+        ])
+        db.set_ingest_state(
+            self.conn,
+            "/tmp/source.jsonl",
+            inode=1,
+            offset=10,
+            size=10,
+            mtime=float(_ts("2026-06-06")),
+        )
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_audit_returns_sources_and_ingest_state(self):
+        a = aggregate.audit(self.conn, self.pricing)
+        self.assertEqual(a["meta"]["total_events"], 2)
+        self.assertEqual(a["ingest_state"]["files"], 1)
+        sources = {s["source"]: s for s in a["sources"]}
+        self.assertEqual(sources["claude"]["total"], 10)
+        self.assertEqual(sources["codex"]["total"], 120)
+
+    def test_audit_unknown_models_are_limited_to_current_db(self):
+        from tokenstat import pricing as pricing_mod
+
+        pricing_mod.rates_for_model("old-unknown-model", self.pricing)
+        current_pricing = {
+            "default": self.pricing["default"],
+            "anthropic": {},
+            "openai": {"known": self.pricing["default"]},
+        }
+        a = aggregate.audit(self.conn, current_pricing)
+        self.assertNotIn("old-unknown-model", a["unknown_models"])
+        self.assertEqual(a["unknown_models"], [])
+
+    def test_session_detail_aggregates_groups_and_files(self):
+        d = aggregate.session_detail(self.conn, "s2", "today", self.pricing)
+        self.assertEqual(d["summary"]["total"], 120)
+        self.assertEqual(d["summary"]["records"], 1)
+        self.assertEqual(d["groups"][0]["project"], "b")
+        self.assertEqual(d["source_files"][0]["records"], 1)
+
+    def test_insights_explains_today_contributors(self):
+        with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+            data = aggregate.insights(self.conn, self.pricing)
+        self.assertEqual(data["metrics"]["today_total"], 120)
+        bodies = " ".join(card["body"] for card in data["cards"])
+        self.assertIn("b / codex", bodies)
+        self.assertIn("codex / known", bodies)
 
 
 if __name__ == "__main__":

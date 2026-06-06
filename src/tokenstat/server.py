@@ -7,8 +7,9 @@ launchd KeepAlive 负责保活。
 from __future__ import annotations
 
 import json
+import platform
+import subprocess
 import threading
-import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -35,6 +36,24 @@ _CONTENT_TYPES = {
 
 def _now_local_str() -> str:
     return datetime.now(tz=_LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _path_status(path: Path) -> dict:
+    return {
+        "path": str(path),
+        "exists": path.exists(),
+        "is_dir": path.is_dir(),
+    }
+
+
+def _db_status() -> dict:
+    db_path = Path(config.DB_PATH)
+    exists = db_path.exists()
+    return {
+        "path": str(db_path),
+        "exists": exists,
+        "size_bytes": db_path.stat().st_size if exists else 0,
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -87,13 +106,47 @@ class Handler(BaseHTTPRequestHandler):
                 self._api_breakdown(period)
             elif path == "/api/meta":
                 self._api_meta()
+            elif path == "/api/audit":
+                self._api_audit()
+            elif path == "/api/health":
+                self._api_health()
+            elif path == "/api/insights":
+                self._api_insights()
             elif path == "/api/top_sessions":
                 period = qs.get("period", ["today"])[0]
                 limit_raw = qs.get("limit", ["10"])[0]
                 self._api_top_sessions(period, limit_raw)
+            elif path == "/api/session_detail":
+                session_id = qs.get("session_id", [""])[0]
+                period = qs.get("period", ["today"])[0]
+                self._api_session_detail(session_id, period)
             else:
                 self.send_error(404, "Not Found")
         except Exception:  # 任何 API 异常都回 JSON，不让连接挂死
+            print(f"[server] API 错误: {traceback.format_exc()}", flush=True)
+            self._send_json({"error": "internal server error"}, status=500)
+
+    def do_POST(self):  # noqa: N802
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path != "/api/notify":
+                self.send_error(404, "Not Found")
+                return
+            raw_len = self.headers.get("Content-Length", "0")
+            try:
+                length = max(0, min(int(raw_len), 2048))
+            except ValueError:
+                length = 0
+            body = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                payload = {}
+            if not isinstance(payload, dict):
+                self._send_json({"error": "bad payload"}, status=400)
+                return
+            self._api_notify(payload.get("kind", "alert"), payload.get("message", ""))
+        except Exception:
             print(f"[server] API 错误: {traceback.format_exc()}", flush=True)
             self._send_json({"error": "internal server error"}, status=500)
 
@@ -140,6 +193,48 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
         self._send_json(data)
 
+    def _api_audit(self):
+        pricing = pricing_mod.load_pricing()
+        conn = self._conn()
+        try:
+            data = aggregate.audit(conn, pricing)
+        finally:
+            conn.close()
+        data["generated_at"] = _now_local_str()
+        data["db"] = _db_status()
+        data["data_sources"] = {
+            "claude": _path_status(config.CLAUDE_PROJECTS_DIR),
+            "codex": [_path_status(path) for path in config.CODEX_SESSION_DIRS],
+        }
+        self._send_json(data)
+
+    def _api_health(self):
+        pricing = pricing_mod.load_pricing()
+        conn = self._conn()
+        try:
+            audit = aggregate.audit(conn, pricing)
+        finally:
+            conn.close()
+        payload = {
+            "status": audit["status"],
+            "generated_at": _now_local_str(),
+            "db": _db_status(),
+            "sources": audit["sources"],
+            "ingest_state": audit["ingest_state"],
+            "issues": audit["issues"],
+        }
+        self._send_json(payload)
+
+    def _api_insights(self):
+        pricing = pricing_mod.load_pricing()
+        conn = self._conn()
+        try:
+            data = aggregate.insights(conn, pricing)
+        finally:
+            conn.close()
+        data["generated_at"] = _now_local_str()
+        self._send_json(data)
+
     def _api_top_sessions(self, period: str, limit_raw: str):
         if period not in ("today", "week", "month", "year"):
             self._send_json({"error": f"bad period: {period}"}, status=400)
@@ -155,6 +250,62 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
         self._send_json(data)
+
+    def _api_session_detail(self, session_id: str, period: str):
+        if period not in ("today", "week", "month", "year"):
+            self._send_json({"error": f"bad period: {period}"}, status=400)
+            return
+        if not session_id or len(session_id) > 128:
+            self._send_json({"error": "bad session_id"}, status=400)
+            return
+        pricing = pricing_mod.load_pricing()
+        conn = self._conn()
+        try:
+            data = aggregate.session_detail(conn, session_id, period, pricing)
+        finally:
+            conn.close()
+        self._send_json(data)
+
+    def _api_notify(self, kind: str, message: str):
+        if not isinstance(kind, str) or not isinstance(message, str):
+            self._send_json({"ok": False, "error": "bad payload"}, status=400)
+            return
+        client_host = self.client_address[0] if getattr(self, "client_address", None) else ""
+        if client_host not in ("127.0.0.1", "::1", "localhost"):
+            self._send_json({"ok": False, "error": "local requests only"}, status=403)
+            return
+        if self.headers.get("X-Tokenstat-Action") != "notify":
+            self._send_json({"ok": False, "error": "missing action header"}, status=403)
+            return
+        if kind != "alert":
+            self._send_json({"ok": False, "error": "bad kind"}, status=400)
+            return
+        msg = (message or "").strip()
+        if not msg:
+            self._send_json({"ok": False, "error": "empty message"}, status=400)
+            return
+        msg = " ".join(msg[:180].split())
+        if platform.system() != "Darwin":
+            self._send_json({"ok": False, "error": "notifications only supported on macOS"}, status=501)
+            return
+        safe_msg = msg.replace("\\", "\\\\").replace('"', '\\"')
+        script = f'display notification "{safe_msg}" with title "Token 统计告警"'
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=500)
+            return
+        if result.returncode != 0:
+            err = (result.stderr or "notification command failed").strip()[:160]
+            self._send_json({"ok": False, "error": err}, status=500)
+            return
+        self._send_json({"ok": True})
 
 
 def _ingest_loop(stop_event: threading.Event) -> None:

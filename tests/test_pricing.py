@@ -76,6 +76,12 @@ class TestUnknownAndFallback(unittest.TestCase):
         pricing.rates_for_model("totally-made-up-model-zzz", p)
         self.assertIn("totally-made-up-model-zzz", pricing.unknown_models())
 
+    def test_is_unknown_model_does_not_use_global_state(self):
+        p = pricing.load_pricing()
+        pricing.rates_for_model("claude-known-later", {"default": p["default"], "anthropic": {}, "openai": {}})
+        local = {"default": p["default"], "anthropic": {"claude-known-later": p["default"]}, "openai": {}}
+        self.assertFalse(pricing.is_unknown_model("claude-known-later", local))
+
     def test_missing_file_fallback(self):
         p = pricing.load_pricing("/nonexistent/pricing.json")
         # 回退结构带 default

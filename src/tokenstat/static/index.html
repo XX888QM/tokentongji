@@ -26,6 +26,10 @@
         <label>今日 Token 超过（万）</label>
         <input type="number" id="alertTokens" min="0" step="1" placeholder="留空不告警">
       </div>
+      <div class="settings-row settings-check">
+        <label for="desktopNotify">启用 macOS 通知</label>
+        <input type="checkbox" id="desktopNotify">
+      </div>
       <div class="settings-actions">
         <button onclick="saveSettings()">保存</button>
         <button onclick="toggleSettings()">取消</button>
@@ -71,6 +75,36 @@
 
     <!-- 支撑数据：今日 / 本周 / 本月 -->
     <section class="stats" id="stats"></section>
+
+    <!-- 运行审计 + 异常洞察 -->
+    <section class="panel audit-panel">
+      <div class="panel-head">
+        <h2>运行审计</h2>
+        <span class="status-pill" id="auditStatus">检查中</span>
+      </div>
+      <div class="audit-grid">
+        <div class="audit-block">
+          <h3>数据源</h3>
+          <div id="auditSources" class="kv-list"></div>
+        </div>
+        <div class="audit-block">
+          <h3>入库状态</h3>
+          <div id="auditIngest" class="kv-list"></div>
+        </div>
+        <div class="audit-block">
+          <h3>口径风险</h3>
+          <div id="auditIssues" class="issue-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel insights-panel">
+      <div class="panel-head">
+        <h2>异常洞察</h2>
+        <span class="panel-note" id="insightDate">今日</span>
+      </div>
+      <div class="insight-cards" id="insightCards"></div>
+    </section>
 
     <!-- 拆分明细 -->
     <section class="panel">
@@ -140,6 +174,7 @@
           <tbody></tbody>
         </table>
       </div>
+      <div class="session-detail" id="sessionDetail" hidden></div>
     </section>
 
     <footer class="footer">
