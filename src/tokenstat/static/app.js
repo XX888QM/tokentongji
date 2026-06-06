@@ -46,13 +46,13 @@ async function getJSON(url) {
   return res.json();
 }
 
-// ---- HERO（今年）----
-function renderHero(p, year) {
+// ---- HERO（今日）----
+function renderHero(p, day) {
   const claude = p.by_source.claude || { total: 0, cost_usd: 0 };
   const codex = p.by_source.codex || { total: 0, cost_usd: 0 };
   const total = p.total || 0;
 
-  document.getElementById('heroRange').textContent = `今年累计烧掉 · ${year}`;
+  document.getElementById('heroRange').textContent = `今日烧掉 · ${day}`;
   const heroEl = document.getElementById('heroTotal');
   heroEl.textContent = fmtCN(total);
   heroEl.title = fmt(total) + ' tokens';
@@ -88,12 +88,12 @@ function statCard(label, p) {
 
 async function loadSummary() {
   const s = await getJSON('/api/summary');
-  const year = (s.generated_at || '----').slice(0, 4);
-  renderHero(s.periods.year, year);
+  const day = (s.generated_at || '----------').slice(0, 10);
+  renderHero(s.periods.today, day);
   document.getElementById('stats').innerHTML =
-    statCard('今日', s.periods.today) +
     statCard('本周', s.periods.week) +
-    statCard('本月', s.periods.month);
+    statCard('本月', s.periods.month) +
+    statCard('今年', s.periods.year);
   document.getElementById('meta').innerHTML =
     `更新于 ${s.generated_at}<br>每 ${s.refresh_sec}s 自动刷新`;
   document.getElementById('pricingNote').textContent = s.pricing_note || '';
