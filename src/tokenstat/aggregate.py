@@ -26,6 +26,9 @@ def period_range(period: str, today: Optional[date] = None) -> tuple[str, str]:
     t = today or _today_local()
     if period == "today":
         return t.isoformat(), t.isoformat()
+    if period == "yesterday":
+        y = t - timedelta(days=1)
+        return y.isoformat(), y.isoformat()
     if period == "week":
         monday = t - timedelta(days=t.weekday())
         return monday.isoformat(), t.isoformat()
@@ -125,6 +128,7 @@ def summary(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
     return {
         "periods": {
             "today": _period_summary(conn, "today", pricing),
+            "yesterday": _period_summary(conn, "yesterday", pricing),
             "week": _period_summary(conn, "week", pricing),
             "month": _period_summary(conn, "month", pricing),
             "year": _period_summary(conn, "year", pricing),

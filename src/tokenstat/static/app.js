@@ -5,7 +5,7 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // ============ API 契约（前端消费，后端必须照此产出）============
 // GET /api/summary
 //   { generated_at, refresh_sec, pricing_note,
-//     periods: { today: P, week: P, month: P, year: P } }
+//     periods: { today: P, yesterday: P, week: P, month: P, year: P } }
 //   P = { total, cost_usd, by_source: { claude:{total,cost_usd}, codex:{total,cost_usd} } }
 // GET /api/daily?days=30           -> { days: [ {date, claude, codex} ] }
 // GET /api/breakdown?period=...    -> { period, by_model:[...], by_project:[...] }
@@ -180,6 +180,7 @@ async function loadSummary() {
   const day = (s.generated_at || '----------').slice(0, 10);
   renderHero(s.periods.today, day);
   document.getElementById('stats').innerHTML =
+    statCard('昨天', s.periods.yesterday) +
     statCard('本周', s.periods.week) +
     statCard('本月', s.periods.month) +
     statCard('今年', s.periods.year);

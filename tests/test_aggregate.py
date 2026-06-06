@@ -16,6 +16,10 @@ class TestPeriodRange(unittest.TestCase):
         t = date(2026, 6, 6)  # 周六
         self.assertEqual(aggregate.period_range("today", t), ("2026-06-06", "2026-06-06"))
 
+    def test_yesterday(self):
+        t = date(2026, 6, 6)
+        self.assertEqual(aggregate.period_range("yesterday", t), ("2026-06-05", "2026-06-05"))
+
     def test_week_monday_to_today(self):
         t = date(2026, 6, 6)  # 周六, 本周一=2026-06-01
         self.assertEqual(aggregate.period_range("week", t), ("2026-06-01", "2026-06-06"))
@@ -176,7 +180,8 @@ class TestAuditAndInsights(unittest.TestCase):
         self.assertIn("old-unknown-model", pricing_mod.unknown_models())
 
     def test_session_detail_aggregates_groups_and_files(self):
-        d = aggregate.session_detail(self.conn, "s2", "today", self.pricing)
+        with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+            d = aggregate.session_detail(self.conn, "s2", "today", self.pricing)
         self.assertEqual(d["summary"]["total"], 120)
         self.assertEqual(d["summary"]["records"], 1)
         self.assertEqual(d["groups"][0]["project"], "b")
