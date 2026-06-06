@@ -87,5 +87,37 @@ class TestAggregateQueries(unittest.TestCase):
         self.assertEqual(m["total_events"], 3)
 
 
+class TestTopSessions(unittest.TestCase):
+    """回归：同 session_id 跨 source/model/project 时展示最大 token 分组的属性。"""
+
+    def setUp(self):
+        self.conn = db.get_conn(":memory:")
+        db.init_db(self.conn)
+        self.pricing = {'default': {'input': 1, 'output': 1, 'cache_read': 1,
+                                    'cache_write_5m': 1, 'cache_write_1h': 1},
+                        'anthropic': {}, 'openai': {}}
+        now = int(time.time())
+        db.insert_records(self.conn, [
+            UsageRecord(ts=now, source='claude', model='model-small',
+                        project='/tmp/project-small', input_tokens=1,
+                        total_tokens=1, session_id='sid1', dedup_key='r1'),
+            UsageRecord(ts=now, source='codex', model='model-big',
+                        project='/tmp/project-big', input_tokens=100,
+                        total_tokens=100, session_id='sid1', dedup_key='r2'),
+        ])
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_dominant_row_wins(self):
+        sessions = aggregate.top_sessions(self.conn, 'today', self.pricing, 10)['sessions']
+        self.assertEqual(len(sessions), 1)
+        s = sessions[0]
+        self.assertEqual(s['model'], 'model-big')
+        self.assertEqual(s['source'], 'codex')
+        self.assertEqual(s['project'], 'project-big')
+        self.assertEqual(s['total'], 101)
+
+
 if __name__ == "__main__":
     unittest.main()
