@@ -96,13 +96,17 @@ def process_record(
         payload = {}
 
     if env_type == "session_meta":
+        sid = payload.get("id")
+        if sid and sid != state.session_id:
+            # 新会话：差分基线清零，让新会话的 cwd/model 重新注入
+            state.prev_total = _zero_total()
+            state.cur_cwd = None
+            state.cur_model = None
+            state.session_id = sid
         cwd = payload.get("cwd")
         if cwd and state.cur_cwd is None:
             # session_meta.cwd 仅作初值；后续 turn_context.cwd 更权威会覆盖
             state.cur_cwd = cwd
-        sid = payload.get("id")
-        if sid:
-            state.session_id = sid
         return None
 
     if env_type == "turn_context":
@@ -149,6 +153,8 @@ def process_record(
     model = state.cur_model or state.default_model or "unknown"
     cwd = state.cur_cwd or "unknown"
     ts = parse_iso_utc(obj.get("timestamp", ""))
+    if ts == 0:
+        return None
 
     return UsageRecord(
         ts=ts,

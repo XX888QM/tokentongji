@@ -1,5 +1,7 @@
 'use strict';
 
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 // ============ API 契约（前端消费，后端必须照此产出）============
 // GET /api/summary
 //   { generated_at, refresh_sec, pricing_note,
@@ -175,7 +177,7 @@ async function loadBreakdown() {
     b.by_model
       .map(
         (r) => `<tr>
-          <td>${modelDisplay(r.model)}</td><td>${badge(r.source)}</td>
+          <td>${esc(modelDisplay(r.model))}</td><td>${badge(esc(r.source))}</td>
           ${numCell(r.input)}${numCell(r.output)}${numCell(r.cache_read)}${numCell(r.cache_creation)}${numCell(r.total)}
           <td class="num">${fmtCost(r.cost_usd)}</td>
         </tr>`
@@ -186,7 +188,7 @@ async function loadBreakdown() {
     b.by_project
       .map(
         (r) => `<tr>
-          <td>${r.project || '(未知)'}</td><td>${badge(r.source)}</td>
+          <td>${esc(r.project) || '(未知)'}</td><td>${badge(esc(r.source))}</td>
           ${numCell(r.total)}
           <td class="num">${fmtCost(r.cost_usd)}</td>
         </tr>`

@@ -8,6 +8,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+def _env_int(name: str, default: int) -> int:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        raise ValueError(f"环境变量 {name} 须为整数，收到 {val!r}")
+
 HOME = Path.home()
 
 # ---- 数据源 ----
@@ -23,13 +32,13 @@ DB_PATH = DATA_DIR / "tokenstat.db"
 
 # ---- Web 服务 ----
 HOST = os.environ.get("TOKENSTAT_HOST", "127.0.0.1")
-PORT = int(os.environ.get("TOKENSTAT_PORT", "8787"))
+PORT = _env_int("TOKENSTAT_PORT", 8787)
 
 # ---- 后台 ingest ----
-INGEST_INTERVAL_SEC = int(os.environ.get("TOKENSTAT_INGEST_INTERVAL", "60"))
+INGEST_INTERVAL_SEC = _env_int("TOKENSTAT_INGEST_INTERVAL", 60)
 
 # ---- 前端自动刷新（秒）----
-DASHBOARD_REFRESH_SEC = int(os.environ.get("TOKENSTAT_REFRESH", "30"))
+DASHBOARD_REFRESH_SEC = _env_int("TOKENSTAT_REFRESH", 30)
 
 # ---- 时区（仅记录，实际换算在 models.py）----
 LOCAL_TZ_NAME = "Asia/Shanghai"

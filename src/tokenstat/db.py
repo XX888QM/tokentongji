@@ -104,8 +104,11 @@ _PLACEHOLDERS = ",".join(["?"] * 16)
 # Claude 旧流式格式：同 message.id 多行 output 递增，取最大那条
 _ON_CONFLICT_MAX = """
 ON CONFLICT(dedup_key) DO UPDATE SET
-    output_tokens = MAX(usage_events.output_tokens, excluded.output_tokens),
-    total_tokens  = MAX(usage_events.total_tokens,  excluded.total_tokens)
+    output_tokens         = MAX(usage_events.output_tokens,         excluded.output_tokens),
+    input_tokens          = MAX(usage_events.input_tokens,          excluded.input_tokens),
+    cache_creation_tokens = MAX(usage_events.cache_creation_tokens, excluded.cache_creation_tokens),
+    cache_read_tokens     = MAX(usage_events.cache_read_tokens,     excluded.cache_read_tokens),
+    total_tokens          = MAX(usage_events.total_tokens,          excluded.total_tokens)
 """
 
 

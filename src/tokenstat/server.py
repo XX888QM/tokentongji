@@ -13,6 +13,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+import traceback
 
 from . import aggregate, config, db
 from . import pricing as pricing_mod
@@ -52,7 +53,7 @@ class Handler(BaseHTTPRequestHandler):
     def _send_static(self, rel: str) -> None:
         # 防目录穿越
         safe = (STATIC_DIR / rel).resolve()
-        if not str(safe).startswith(str(STATIC_DIR.resolve())) or not safe.is_file():
+        if not safe.is_relative_to(STATIC_DIR.resolve()) or not safe.is_file():
             self.send_error(404, "Not Found")
             return
         body = safe.read_bytes()
@@ -85,8 +86,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._api_meta()
             else:
                 self.send_error(404, "Not Found")
-        except Exception as e:  # 任何 API 异常都回 JSON，不让连接挂死
-            self._send_json({"error": str(e)}, status=500)
+        except Exception:  # 任何 API 异常都回 JSON，不让连接挂死
+            print(f"[server] API 错误: {traceback.format_exc()}", flush=True)
+            self._send_json({"error": "internal server error"}, status=500)
 
     # ---- API ----
     def _conn(self):

@@ -70,6 +70,8 @@ def parse_record(obj: dict, source_file: str, pos: int) -> Optional[UsageRecord]
     is_sidechain = bool(obj.get("isSidechain", False))
     category = _category(cwd, is_sidechain, source_file)
     ts = parse_iso_utc(obj.get("timestamp", ""))
+    if ts == 0:
+        return None
     session_id = obj.get("sessionId") or ""
 
     return UsageRecord(
