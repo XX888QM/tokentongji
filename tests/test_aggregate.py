@@ -162,7 +162,9 @@ class TestAuditAndInsights(unittest.TestCase):
     def test_audit_unknown_models_are_limited_to_current_db(self):
         from tokenstat import pricing as pricing_mod
 
+        pricing_mod.clear_unknown_models()
         pricing_mod.rates_for_model("old-unknown-model", self.pricing)
+        self.assertIn("old-unknown-model", pricing_mod.unknown_models())
         current_pricing = {
             "default": self.pricing["default"],
             "anthropic": {},
@@ -171,6 +173,7 @@ class TestAuditAndInsights(unittest.TestCase):
         a = aggregate.audit(self.conn, current_pricing)
         self.assertNotIn("old-unknown-model", a["unknown_models"])
         self.assertEqual(a["unknown_models"], [])
+        self.assertIn("old-unknown-model", pricing_mod.unknown_models())
 
     def test_session_detail_aggregates_groups_and_files(self):
         d = aggregate.session_detail(self.conn, "s2", "today", self.pricing)
@@ -186,6 +189,27 @@ class TestAuditAndInsights(unittest.TestCase):
         bodies = " ".join(card["body"] for card in data["cards"])
         self.assertIn("b / codex", bodies)
         self.assertIn("codex / known", bodies)
+
+    def test_insights_uses_week_baseline_without_empty_yesterday_card(self):
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-04"), source="codex", model="known",
+                            project="/tmp/past", input_tokens=100,
+                            total_tokens=100, dedup_key="past"),
+                UsageRecord(ts=_ts("2026-06-06"), source="codex", model="known",
+                            project="/tmp/today", input_tokens=200,
+                            total_tokens=200, dedup_key="today"),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+                data = aggregate.insights(conn, self.pricing)
+        finally:
+            conn.close()
+
+        titles = [card["title"] for card in data["cards"]]
+        self.assertNotIn("昨日基线为空", titles)
+        self.assertIn("近 7 日基线", titles)
 
 
 if __name__ == "__main__":

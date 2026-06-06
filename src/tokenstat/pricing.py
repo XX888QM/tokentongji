@@ -177,3 +177,8 @@ def pricing_note(pricing: Optional[dict] = None) -> str:
 
 def unknown_models() -> list[str]:
     return sorted(_UNKNOWN_MODELS)
+
+
+def clear_unknown_models() -> None:
+    """清空进程内未知模型记录，主要用于测试与诊断前重置状态。"""
+    _UNKNOWN_MODELS.clear()

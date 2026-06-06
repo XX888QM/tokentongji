@@ -585,7 +585,7 @@ def insights(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
                 "title": "今日对比昨日",
                 "body": f"{'增加' if delta >= 0 else '减少'} {abs(pct_change)}%，差值 {abs(delta):,} tokens。",
             })
-        else:
+        elif baseline == 0:
             cards.append({
                 "level": "info",
                 "title": "昨日基线为空",

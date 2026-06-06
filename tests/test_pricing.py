@@ -71,10 +71,23 @@ class TestCost(unittest.TestCase):
 
 
 class TestUnknownAndFallback(unittest.TestCase):
+    def setUp(self):
+        pricing.clear_unknown_models()
+
+    def tearDown(self):
+        pricing.clear_unknown_models()
+
     def test_unknown_recorded(self):
         p = pricing.load_pricing()
         pricing.rates_for_model("totally-made-up-model-zzz", p)
         self.assertIn("totally-made-up-model-zzz", pricing.unknown_models())
+
+    def test_clear_unknown_models_resets_process_state(self):
+        p = pricing.load_pricing()
+        pricing.rates_for_model("one-off-unknown-model", p)
+        self.assertIn("one-off-unknown-model", pricing.unknown_models())
+        pricing.clear_unknown_models()
+        self.assertEqual(pricing.unknown_models(), [])
 
     def test_is_unknown_model_does_not_use_global_state(self):
         p = pricing.load_pricing()
