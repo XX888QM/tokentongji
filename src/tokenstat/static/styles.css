@@ -82,9 +82,28 @@ body::before {
 }
 .brand { display: flex; align-items: center; gap: 14px; }
 .brand-mark {
-  font-size: 24px; color: var(--ember-2);
-  text-shadow: 0 0 18px rgba(255,143,67,0.6);
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: #c9c5bf;
+  filter: drop-shadow(0 0 12px rgba(255,143,67,0.18));
   animation: flicker 4s ease-in-out infinite;
+}
+.brand-mark svg { width: 100%; height: 100%; display: block; }
+.brand-mark-bg {
+  fill: rgba(245,236,226,0.08);
+  stroke: rgba(245,236,226,0.28);
+  stroke-width: 1.5;
+}
+.brand-mark-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .brand-text h1 {
   font-family: var(--ui);
