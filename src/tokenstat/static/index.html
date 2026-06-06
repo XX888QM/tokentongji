@@ -43,20 +43,6 @@
     <!-- 支撑数据：今日 / 本周 / 本月 -->
     <section class="stats" id="stats"></section>
 
-    <!-- 趋势图 -->
-    <section class="panel chart-panel">
-      <div class="panel-head">
-        <h2>近 30 天 · 每日消耗</h2>
-        <div class="legend">
-          <span class="dot claude"></span>Claude
-          <span class="dot codex"></span>Codex
-        </div>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="dailyChart"></canvas>
-      </div>
-    </section>
-
     <!-- 拆分明细 -->
     <section class="panel">
       <div class="panel-head">
@@ -87,6 +73,20 @@
             <tbody></tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- 趋势图 -->
+    <section class="panel chart-panel">
+      <div class="panel-head">
+        <h2>近 30 天 · 每日消耗</h2>
+        <div class="legend">
+          <span class="dot claude"></span>Claude
+          <span class="dot codex"></span>Codex
+        </div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="dailyChart"></canvas>
       </div>
     </section>
 
