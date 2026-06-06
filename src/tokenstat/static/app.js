@@ -157,6 +157,8 @@ async function loadDaily() {
 }
 
 const badge = (src) => `<span class="badge ${src}">${src}</span>`;
+// 模型名去掉末尾日期后缀（如 -20251001），更清爽
+const modelDisplay = (m) => (m || '').replace(/-\d{6,8}$/, '');
 
 async function loadBreakdown() {
   const b = await getJSON(`/api/breakdown?period=${currentPeriod}`);
@@ -164,7 +166,7 @@ async function loadBreakdown() {
     b.by_model
       .map(
         (r) => `<tr>
-          <td>${r.model}</td><td>${badge(r.source)}</td>
+          <td>${modelDisplay(r.model)}</td><td>${badge(r.source)}</td>
           ${numCell(r.input)}${numCell(r.output)}${numCell(r.cache_read)}${numCell(r.cache_creation)}${numCell(r.total)}
           <td class="num">${fmtCost(r.cost_usd)}</td>
         </tr>`

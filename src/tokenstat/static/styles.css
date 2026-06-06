@@ -249,16 +249,20 @@ body::before {
 }
 
 /* ---- 表格 ---- */
-.tables { display: grid; grid-template-columns: 1.5fr 1fr; gap: 28px; }
+.tables { display: grid; grid-template-columns: 1.7fr 1fr; gap: 24px; }
+.table-block { min-width: 0; overflow-x: auto; }
 .table-block h3 {
   font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase;
   color: var(--faint); font-weight: 500; margin: 0 0 12px;
 }
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border-soft); }
-th { color: var(--faint); font-weight: 500; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+th, td { text-align: left; padding: 8px 7px; border-bottom: 1px solid var(--border-soft); }
+th { color: var(--faint); font-weight: 500; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
 td { color: var(--text); }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* 数字与单位绝不换行（避免「百/万」被拆成两行） */
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 模型/项目名列允许折行，但优先在连字符处断 */
+#modelTable td:first-child, #projectTable td:first-child { word-break: break-word; }
 tbody tr { transition: background .15s ease; }
 tbody tr:hover { background: var(--surface-2); }
 .badge { font-size: 10px; padding: 1px 7px; border-radius: 4px; letter-spacing: 0.04em; }
