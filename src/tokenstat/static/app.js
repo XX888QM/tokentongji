@@ -3,14 +3,10 @@
 // ============ API 契约（前端消费，后端必须照此产出）============
 // GET /api/summary
 //   { generated_at, refresh_sec, pricing_note,
-//     periods: { today: P, week: P, month: P } }
+//     periods: { today: P, week: P, month: P, year: P } }
 //   P = { total, cost_usd, by_source: { claude:{total,cost_usd}, codex:{total,cost_usd} } }
-// GET /api/daily?days=30
-//   { days: [ { date, claude, codex } ... ] }   // claude/codex = 当天总 token
-// GET /api/breakdown?period=today|week|month
-//   { period,
-//     by_model:   [ { model, source, input, output, cache_read, cache_creation, total, cost_usd } ],
-//     by_project: [ { project, source, total, cost_usd } ] }
+// GET /api/daily?days=30           -> { days: [ {date, claude, codex} ] }
+// GET /api/breakdown?period=...    -> { period, by_model:[...], by_project:[...] }
 // ===============================================================
 
 let dailyChart = null;
@@ -20,7 +16,6 @@ let refreshTimer = null;
 const fmt = (n) => (n == null ? '0' : Number(n).toLocaleString('en-US'));
 const fmtCost = (n) => '$' + (Number(n) || 0).toFixed(2);
 
-// 去掉小数末尾多余的 0（1.00 -> 1，8.50 -> 8.5）
 function stripZeros(s) {
   return s.replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
 }
@@ -42,8 +37,8 @@ function fmtCN(n) {
   return sign + v.toLocaleString('en-US');
 }
 
-// 数字单元格：显示万/亿，title 悬停看精确原值
 const numCell = (n) => `<td class="num" title="${fmt(n)}">${fmtCN(n)}</td>`;
+const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
 
 async function getJSON(url) {
   const res = await fetch(url, { cache: 'no-store' });
@@ -51,47 +46,80 @@ async function getJSON(url) {
   return res.json();
 }
 
-function periodCard(label, p) {
+// ---- HERO（今年）----
+function renderHero(p, year) {
   const claude = p.by_source.claude || { total: 0, cost_usd: 0 };
   const codex = p.by_source.codex || { total: 0, cost_usd: 0 };
+  const total = p.total || 0;
+
+  document.getElementById('heroRange').textContent = `今年累计烧掉 · ${year}`;
+  const heroEl = document.getElementById('heroTotal');
+  heroEl.textContent = fmtCN(total);
+  heroEl.title = fmt(total) + ' tokens';
+  document.getElementById('heroCost').textContent = '估算 ' + fmtCost(p.cost_usd);
+
+  const cw = pct(claude.total, total);
+  const xw = 100 - cw;
+  document.getElementById('heroSplitbar').innerHTML =
+    `<span class="seg-claude" style="width:${cw}%"></span>` +
+    `<span class="seg-codex" style="width:${xw}%"></span>`;
+  document.getElementById('heroSplitLegend').innerHTML =
+    `<div class="split-row"><span class="sw claude"></span><span class="nm">Claude</span>` +
+    `<span class="vl">${fmtCN(claude.total)}</span><span class="pc">${cw}%</span></div>` +
+    `<div class="split-row"><span class="sw codex"></span><span class="nm">Codex</span>` +
+    `<span class="vl">${fmtCN(codex.total)}</span><span class="pc">${xw}%</span></div>`;
+}
+
+// ---- 支撑数据卡（今日/本周/本月）----
+function statCard(label, p) {
+  const claude = p.by_source.claude || { total: 0 };
+  const codex = p.by_source.codex || { total: 0 };
   return `
-    <div class="card">
-      <div class="label">${label}</div>
-      <div class="total" title="${fmt(p.total)}">${fmtCN(p.total)}</div>
-      <div class="cost">${fmtCost(p.cost_usd)}</div>
-      <div class="split">
-        <span class="claude-v">Claude ${fmtCN(claude.total)}</span>
-        <span class="codex-v">Codex ${fmtCN(codex.total)}</span>
+    <div class="stat">
+      <div class="s-label">${label}</div>
+      <div class="s-total" title="${fmt(p.total)}">${fmtCN(p.total)}</div>
+      <div class="s-cost">估算 ${fmtCost(p.cost_usd)}</div>
+      <div class="s-split">
+        <span class="cv">Claude ${fmtCN(claude.total)}</span>
+        <span class="xv">Codex ${fmtCN(codex.total)}</span>
       </div>
     </div>`;
 }
 
 async function loadSummary() {
   const s = await getJSON('/api/summary');
-  document.getElementById('cards').innerHTML =
-    periodCard('今日', s.periods.today) +
-    periodCard('本周', s.periods.week) +
-    periodCard('本月', s.periods.month) +
-    periodCard('今年', s.periods.year);
-  document.getElementById('meta').textContent =
-    `更新于 ${s.generated_at} · 每 ${s.refresh_sec}s 自动刷新`;
+  const year = (s.generated_at || '----').slice(0, 4);
+  renderHero(s.periods.year, year);
+  document.getElementById('stats').innerHTML =
+    statCard('今日', s.periods.today) +
+    statCard('本周', s.periods.week) +
+    statCard('本月', s.periods.month);
+  document.getElementById('meta').innerHTML =
+    `更新于 ${s.generated_at}<br>每 ${s.refresh_sec}s 自动刷新`;
   document.getElementById('pricingNote').textContent = s.pricing_note || '';
   return s.refresh_sec || 30;
 }
 
+// ---- 趋势图 ----
 async function loadDaily() {
   const d = await getJSON('/api/daily?days=30');
-  const labels = d.days.map((x) => x.date.slice(5)); // MM-DD
-  const claude = d.days.map((x) => x.claude);
-  const codex = d.days.map((x) => x.codex);
+  const labels = d.days.map((x) => x.date.slice(5));
   const ctx = document.getElementById('dailyChart').getContext('2d');
+
+  const gClaude = ctx.createLinearGradient(0, 0, 0, 320);
+  gClaude.addColorStop(0, 'rgba(232,121,79,0.32)');
+  gClaude.addColorStop(1, 'rgba(232,121,79,0)');
+  const gCodex = ctx.createLinearGradient(0, 0, 0, 320);
+  gCodex.addColorStop(0, 'rgba(70,181,150,0.28)');
+  gCodex.addColorStop(1, 'rgba(70,181,150,0)');
+
   const cfg = {
     type: 'line',
     data: {
       labels,
       datasets: [
-        { label: 'Claude', data: claude, borderColor: '#d97757', backgroundColor: 'rgba(217,119,87,.12)', fill: true, tension: 0.3, pointRadius: 0 },
-        { label: 'Codex', data: codex, borderColor: '#10a37f', backgroundColor: 'rgba(16,163,127,.12)', fill: true, tension: 0.3, pointRadius: 0 },
+        { label: 'Claude', data: d.days.map((x) => x.claude), borderColor: '#e8794f', backgroundColor: gClaude, fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2 },
+        { label: 'Codex', data: d.days.map((x) => x.codex), borderColor: '#46b596', backgroundColor: gCodex, fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2 },
       ],
     },
     options: {
@@ -101,14 +129,22 @@ async function loadDaily() {
       plugins: {
         legend: { display: false },
         tooltip: {
+          backgroundColor: '#17120f',
+          borderColor: '#2c211b',
+          borderWidth: 1,
+          titleColor: '#f5ece2',
+          bodyColor: '#9c8d7e',
+          padding: 10,
+          titleFont: { family: "'JetBrains Mono', monospace" },
+          bodyFont: { family: "'JetBrains Mono', monospace" },
           callbacks: {
-            label: (ctx) => `${ctx.dataset.label}: ${fmtCN(ctx.parsed.y)} (${fmt(ctx.parsed.y)})`,
+            label: (c) => `  ${c.dataset.label}: ${fmtCN(c.parsed.y)} (${fmt(c.parsed.y)})`,
           },
         },
       },
       scales: {
-        x: { grid: { color: '#272b36' }, ticks: { color: '#8b91a0', maxTicksLimit: 12 } },
-        y: { grid: { color: '#272b36' }, ticks: { color: '#8b91a0', callback: (v) => fmtCN(v) } },
+        x: { grid: { color: 'rgba(44,33,27,0.6)' }, ticks: { color: '#6d5f53', font: { family: "'JetBrains Mono', monospace", size: 10 }, maxTicksLimit: 12 } },
+        y: { grid: { color: 'rgba(44,33,27,0.6)' }, ticks: { color: '#6d5f53', font: { family: "'JetBrains Mono', monospace", size: 10 }, callback: (v) => fmtCN(v) } },
       },
     },
   };
@@ -120,37 +156,31 @@ async function loadDaily() {
   }
 }
 
-function badge(src) {
-  return `<span class="badge ${src}">${src}</span>`;
-}
+const badge = (src) => `<span class="badge ${src}">${src}</span>`;
 
 async function loadBreakdown() {
   const b = await getJSON(`/api/breakdown?period=${currentPeriod}`);
-  const mt = document.querySelector('#modelTable tbody');
-  mt.innerHTML = b.by_model
-    .map(
-      (r) => `<tr>
-        <td>${r.model}</td><td>${badge(r.source)}</td>
-        ${numCell(r.input)}
-        ${numCell(r.output)}
-        ${numCell(r.cache_read)}
-        ${numCell(r.cache_creation)}
-        ${numCell(r.total)}
-        <td class="num">${fmtCost(r.cost_usd)}</td>
-      </tr>`
-    )
-    .join('') || '<tr><td colspan="8">暂无数据</td></tr>';
+  document.querySelector('#modelTable tbody').innerHTML =
+    b.by_model
+      .map(
+        (r) => `<tr>
+          <td>${r.model}</td><td>${badge(r.source)}</td>
+          ${numCell(r.input)}${numCell(r.output)}${numCell(r.cache_read)}${numCell(r.cache_creation)}${numCell(r.total)}
+          <td class="num">${fmtCost(r.cost_usd)}</td>
+        </tr>`
+      )
+      .join('') || '<tr><td colspan="8">暂无数据</td></tr>';
 
-  const pt = document.querySelector('#projectTable tbody');
-  pt.innerHTML = b.by_project
-    .map(
-      (r) => `<tr>
-        <td>${r.project || '(未知)'}</td><td>${badge(r.source)}</td>
-        ${numCell(r.total)}
-        <td class="num">${fmtCost(r.cost_usd)}</td>
-      </tr>`
-    )
-    .join('') || '<tr><td colspan="4">暂无数据</td></tr>';
+  document.querySelector('#projectTable tbody').innerHTML =
+    b.by_project
+      .map(
+        (r) => `<tr>
+          <td>${r.project || '(未知)'}</td><td>${badge(r.source)}</td>
+          ${numCell(r.total)}
+          <td class="num">${fmtCost(r.cost_usd)}</td>
+        </tr>`
+      )
+      .join('') || '<tr><td colspan="4">暂无数据</td></tr>';
 }
 
 async function refreshAll() {
