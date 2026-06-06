@@ -77,7 +77,10 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/summary":
                 self._api_summary()
             elif path == "/api/daily":
-                days = int(qs.get("days", ["30"])[0])
+                try:
+                    days = int(qs.get("days", ["30"])[0])
+                except ValueError:
+                    days = 30
                 self._api_daily(days)
             elif path == "/api/breakdown":
                 period = qs.get("period", ["month"])[0]

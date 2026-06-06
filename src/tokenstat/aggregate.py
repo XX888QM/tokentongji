@@ -267,6 +267,8 @@ def top_sessions(
         s["records"] += r["records"]
         if rt > s["_top_tokens"]:
             s["model"] = r["model"]
+            s["source"] = r["source"]
+            s["project"] = project_display(r["project"])
             s["_top_tokens"] = rt
         if r["date"] < s["date"]:
             s["date"] = r["date"]
