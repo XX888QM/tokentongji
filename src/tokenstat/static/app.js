@@ -12,7 +12,7 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // ===============================================================
 
 let dailyChart = null;
-let currentPeriod = 'month';
+let currentPeriod = 'today';
 let refreshTimer = null;
 
 const fmt = (n) => (n == null ? '0' : Number(n).toLocaleString('en-US'));
