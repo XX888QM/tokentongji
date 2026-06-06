@@ -7,6 +7,32 @@
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
+  <!-- 用量告警横幅 -->
+  <div class="alert-bar" id="alertBar" style="display:none">
+    <span class="alert-icon">⚠</span>
+    <span id="alertMsg"></span>
+    <button class="alert-close" onclick="dismissAlert()">×</button>
+  </div>
+
+  <!-- 告警设置弹窗 -->
+  <div class="settings-modal" id="settingsModal" style="display:none">
+    <div class="settings-inner">
+      <div class="settings-title">用量告警设置</div>
+      <div class="settings-row">
+        <label>今日费用超过 $</label>
+        <input type="number" id="alertCost" min="0" step="0.1" placeholder="留空不告警">
+      </div>
+      <div class="settings-row">
+        <label>今日 Token 超过（万）</label>
+        <input type="number" id="alertTokens" min="0" step="1" placeholder="留空不告警">
+      </div>
+      <div class="settings-actions">
+        <button onclick="saveSettings()">保存</button>
+        <button onclick="toggleSettings()">取消</button>
+      </div>
+    </div>
+  </div>
+
   <div class="grain" aria-hidden="true"></div>
   <div class="ember-glow" aria-hidden="true"></div>
 
@@ -19,7 +45,10 @@
           <span class="brand-sub">FURNACE&nbsp;LEDGER · CLAUDE × CODEX</span>
         </div>
       </div>
-      <div class="meta" id="meta">加载中…</div>
+      <div class="masthead-right">
+        <button class="settings-btn" onclick="toggleSettings()" title="告警设置">⚙</button>
+        <div class="meta" id="meta">加载中…</div>
+      </div>
     </header>
 
     <!-- HERO：今年烧掉多少 token -->
@@ -87,6 +116,29 @@
       </div>
       <div class="chart-wrap">
         <canvas id="dailyChart"></canvas>
+      </div>
+    </section>
+
+    <!-- Top 10 最贵会话 -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>TOP 10 · 最贵会话</h2>
+      </div>
+      <div class="table-block" style="overflow-x:auto">
+        <table id="topSessionsTable">
+          <thead>
+            <tr>
+              <th class="num">#</th>
+              <th>日期</th>
+              <th>项目</th>
+              <th>模型</th>
+              <th>源</th>
+              <th class="num">Tokens</th>
+              <th class="num">估算费用</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
       </div>
     </section>
 

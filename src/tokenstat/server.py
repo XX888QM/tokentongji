@@ -84,6 +84,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._api_breakdown(period)
             elif path == "/api/meta":
                 self._api_meta()
+            elif path == "/api/top_sessions":
+                period = qs.get("period", ["today"])[0]
+                limit_raw = qs.get("limit", ["10"])[0]
+                self._api_top_sessions(period, limit_raw)
             else:
                 self.send_error(404, "Not Found")
         except Exception:  # 任何 API 异常都回 JSON，不让连接挂死
@@ -129,6 +133,22 @@ class Handler(BaseHTTPRequestHandler):
         conn = self._conn()
         try:
             data = aggregate.meta(conn)
+        finally:
+            conn.close()
+        self._send_json(data)
+
+    def _api_top_sessions(self, period: str, limit_raw: str):
+        if period not in ("today", "week", "month", "year"):
+            self._send_json({"error": f"bad period: {period}"}, status=400)
+            return
+        try:
+            limit = max(1, min(int(limit_raw), 50))
+        except ValueError:
+            limit = 10
+        pricing = pricing_mod.load_pricing()
+        conn = self._conn()
+        try:
+            data = aggregate.top_sessions(conn, period, pricing, limit)
         finally:
             conn.close()
         self._send_json(data)

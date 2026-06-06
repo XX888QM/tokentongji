@@ -208,6 +208,84 @@ def breakdown(
     return {"period": period, "by_model": by_model, "by_project": by_project}
 
 
+def top_sessions(
+    conn: sqlite3.Connection,
+    period: str,
+    pricing: Optional[dict] = None,
+    limit: int = 10,
+) -> dict:
+    """按会话聚合，返回费用最高的 Top N 会话。"""
+    if pricing is None:
+        pricing = pricing_mod.load_pricing()
+    start, end = period_range(period)
+    cur = conn.execute(
+        """
+        SELECT session_id, source, model, project,
+               SUM(input_tokens)          AS input,
+               SUM(output_tokens)         AS output,
+               SUM(cache_read_tokens)     AS cache_read,
+               SUM(cache_creation_tokens) AS cache_creation,
+               SUM(reasoning_tokens)      AS reasoning,
+               MIN(date_local)            AS date,
+               COUNT(*)                   AS records
+        FROM usage_events
+        WHERE date_local BETWEEN ? AND ?
+          AND session_id != ''
+        GROUP BY session_id, source, model, project
+        """,
+        (start, end),
+    )
+    sess_map: dict[str, dict] = {}
+    for row in cur.fetchall():
+        r = dict(row)
+        sid = r["session_id"]
+        rt = _row_total(r)
+        rc = pricing_mod.cost_for(
+            r["model"],
+            input_tokens=r["input"],
+            output_tokens=r["output"],
+            cache_read_tokens=r["cache_read"],
+            cache_creation_tokens=r["cache_creation"],
+            reasoning_tokens=r["reasoning"],
+            pricing=pricing,
+        )
+        if sid not in sess_map:
+            sess_map[sid] = {
+                "session_id": sid,
+                "source": r["source"],
+                "project": project_display(r["project"]),
+                "date": r["date"],
+                "total": 0,
+                "cost_usd": 0.0,
+                "records": 0,
+                "model": r["model"],
+                "_top_tokens": rt,
+            }
+        s = sess_map[sid]
+        s["total"] += rt
+        s["cost_usd"] += rc
+        s["records"] += r["records"]
+        if rt > s["_top_tokens"]:
+            s["model"] = r["model"]
+            s["_top_tokens"] = rt
+        if r["date"] < s["date"]:
+            s["date"] = r["date"]
+
+    result = []
+    for s in sorted(sess_map.values(), key=lambda x: x["cost_usd"], reverse=True)[:limit]:
+        result.append({
+            "session_id": s["session_id"],
+            "source": s["source"],
+            "model": s["model"],
+            "project": s["project"],
+            "date": s["date"],
+            "total": s["total"],
+            "cost_usd": round(s["cost_usd"], 4),
+            "records": s["records"],
+        })
+    return {"period": period, "sessions": result}
+
+
 def meta(conn: sqlite3.Connection) -> dict:
     """轻量统计信息：总事件数、日期范围。"""
     cur = conn.execute(

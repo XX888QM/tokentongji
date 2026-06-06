@@ -13,6 +13,54 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 
 let dailyChart = null;
 let currentPeriod = 'today';
+
+// ---- 告警设置 ----
+function loadAlertConfig() {
+  try { return JSON.parse(localStorage.getItem('tokenstat_alert') || '{}'); }
+  catch { return {}; }
+}
+function saveSettings() {
+  const cfg = {
+    daily_cost: parseFloat(document.getElementById('alertCost').value) || 0,
+    daily_tokens: (parseFloat(document.getElementById('alertTokens').value) || 0) * 1e4,
+  };
+  localStorage.setItem('tokenstat_alert', JSON.stringify(cfg));
+  toggleSettings();
+  refreshAll();
+}
+function toggleSettings() {
+  const m = document.getElementById('settingsModal');
+  const isOpen = m.style.display !== 'none';
+  if (!isOpen) {
+    const cfg = loadAlertConfig();
+    document.getElementById('alertCost').value = cfg.daily_cost || '';
+    document.getElementById('alertTokens').value = cfg.daily_tokens ? cfg.daily_tokens / 1e4 : '';
+  }
+  m.style.display = isOpen ? 'none' : 'flex';
+}
+function dismissAlert() {
+  sessionStorage.setItem('tokenstat_alert_dismissed', '1');
+  document.getElementById('alertBar').style.display = 'none';
+  document.body.classList.remove('has-alert');
+}
+function checkAlert(todayData) {
+  if (sessionStorage.getItem('tokenstat_alert_dismissed')) return;
+  const cfg = loadAlertConfig();
+  const msgs = [];
+  if (cfg.daily_cost > 0 && todayData.cost_usd >= cfg.daily_cost)
+    msgs.push(`今日费用 ${fmtCost(todayData.cost_usd)} 已达告警阈值 ${fmtCost(cfg.daily_cost)}`);
+  if (cfg.daily_tokens > 0 && todayData.total >= cfg.daily_tokens)
+    msgs.push(`今日 Token ${fmtCN(todayData.total)} 已达告警阈值 ${fmtCN(cfg.daily_tokens)}`);
+  const bar = document.getElementById('alertBar');
+  if (msgs.length) {
+    document.getElementById('alertMsg').textContent = msgs.join(' · ');
+    bar.style.display = 'flex';
+    document.body.classList.add('has-alert');
+  } else {
+    bar.style.display = 'none';
+    document.body.classList.remove('has-alert');
+  }
+}
 let refreshTimer = null;
 
 const fmt = (n) => (n == null ? '0' : Number(n).toLocaleString('en-US'));
@@ -108,6 +156,7 @@ async function loadSummary() {
   document.getElementById('meta').innerHTML =
     `更新于 ${s.generated_at}<br>每 ${s.refresh_sec}s 自动刷新`;
   document.getElementById('pricingNote').textContent = s.pricing_note || '';
+  checkAlert(s.periods.today);
   return s.refresh_sec || 30;
 }
 
@@ -171,6 +220,20 @@ const badge = (src) => `<span class="badge ${src}">${src}</span>`;
 // 模型名去掉末尾日期后缀（如 -20251001），更清爽
 const modelDisplay = (m) => (m || '').replace(/-\d{6,8}$/, '');
 
+async function loadTopSessions() {
+  const b = await getJSON(`/api/top_sessions?period=${currentPeriod}&limit=10`);
+  document.querySelector('#topSessionsTable tbody').innerHTML =
+    b.sessions.map((r, i) => `<tr>
+      <td class="num">${i + 1}</td>
+      <td>${esc(r.date)}</td>
+      <td>${esc(r.project) || '(未知)'}</td>
+      <td>${esc(modelDisplay(r.model))}</td>
+      <td>${badge(esc(r.source))}</td>
+      ${numCell(r.total)}
+      <td class="num">${fmtCost(r.cost_usd)}</td>
+    </tr>`).join('') || '<tr><td colspan="7">暂无数据</td></tr>';
+}
+
 async function loadBreakdown() {
   const b = await getJSON(`/api/breakdown?period=${currentPeriod}`);
   document.querySelector('#modelTable tbody').innerHTML =
@@ -199,7 +262,7 @@ async function loadBreakdown() {
 async function refreshAll() {
   try {
     const sec = await loadSummary();
-    await Promise.all([loadDaily(), loadBreakdown()]);
+    await Promise.all([loadDaily(), loadBreakdown(), loadTopSessions()]);
     return sec;
   } catch (e) {
     document.getElementById('meta').textContent = '加载失败: ' + e.message;
@@ -215,6 +278,7 @@ function setupPeriodToggle() {
     btn.classList.add('active');
     currentPeriod = btn.dataset.period;
     loadBreakdown();
+    loadTopSessions();
   });
 }
 
