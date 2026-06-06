@@ -35,15 +35,14 @@ class TestDailyEndpointFallback(unittest.TestCase):
     """回归：/api/daily?days=abc 应返回 200 并 fallback 为 30 天，不得 500。"""
 
     def setUp(self):
-        self._tmpfile = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        self._db_path = self._tmpfile.name
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._db_path = self._tmpdir.name + "/test.db"
         conn = db.get_conn(self._db_path)
         db.init_db(conn)
         conn.close()
 
     def tearDown(self):
-        import os
-        os.unlink(self._db_path)
+        self._tmpdir.cleanup()
 
     def test_invalid_days_returns_200_with_30_days(self):
         code, body = _call_get("/api/daily?days=abc", self._db_path)
