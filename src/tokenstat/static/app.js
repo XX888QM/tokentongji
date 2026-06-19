@@ -6,8 +6,8 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // GET /api/summary
 //   { generated_at, refresh_sec, pricing_note,
 //     periods: { today: P, yesterday: P, week: P, month: P, year: P } }
-//   P = { total, cost_usd, by_source: { claude, codex, opencode, openclaw } }  // 每个 = {total,cost_usd}
-// GET /api/daily?days=30           -> { days: [ {date, claude, codex} ] }
+//   P = { total, cost_usd, by_source: { [source]: {total,cost_usd} } }
+// GET /api/daily?days=30           -> { sources, days: [ {date, total, [source]: tokens} ] }
 // GET /api/breakdown?period=...    -> { period, by_model:[...], by_project:[...] }
 // GET /api/audit                   -> { status, meta, sources, ingest_state, issues, ... }
 // GET /api/insights                -> { metrics, cards }
@@ -17,6 +17,41 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 let dailyChart = null;
 let currentPeriod = 'today';
 let CNY_RATE = 7.25;
+
+const SOURCE_META = {
+  claude:   { label: 'Claude',   color: '#f97316' },
+  codex:    { label: 'Codex',    color: '#22c55e' },
+  opencode: { label: 'Opencode', color: '#a78bfa' },
+  openclaw: { label: 'Openclaw', color: '#d67cf2' },
+};
+const SOURCE_ORDER = Object.keys(SOURCE_META);
+
+function metaForSource(source) {
+  return SOURCE_META[source] || { label: source, color: '#9b9ba0' };
+}
+
+function orderedSources(bySource = {}) {
+  const known = SOURCE_ORDER.filter((source) => Object.prototype.hasOwnProperty.call(bySource, source));
+  const extra = Object.keys(bySource).filter((source) => !SOURCE_META[source]).sort();
+  return known.concat(extra);
+}
+
+function sourceRows(bySource = {}, total = 0) {
+  return orderedSources(bySource)
+    .map((source) => {
+      const meta = metaForSource(source);
+      const rec = bySource[source] || {};
+      return { source, label: meta.label, color: meta.color, total: rec.total || 0, pct: pct(rec.total || 0, total) };
+    })
+    .filter((row) => row.total > 0);
+}
+
+function rgba(hex, alpha) {
+  const clean = String(hex || '').replace('#', '');
+  if (clean.length !== 6) return `rgba(155,155,160,${alpha})`;
+  const n = parseInt(clean, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
 
 // ---- 告警设置 ----
 function loadAlertConfig() {
@@ -139,11 +174,8 @@ async function maybeNotifyAlert(message) {
 // ---- HERO（今日）----
 function renderHero(p, day) {
   const src = p.by_source || {};
-  const claude   = src.claude   || { total: 0, cost_usd: 0 };
-  const codex    = src.codex    || { total: 0, cost_usd: 0 };
-  const opencode = src.opencode || { total: 0, cost_usd: 0 };
-  const openclaw = src.openclaw || { total: 0, cost_usd: 0 };
   const total = p.total || 0;
+  const rows = sourceRows(src, total);
 
   document.getElementById('heroRange').textContent = `今日消耗 · ${day}`;
   const heroEl = document.getElementById('heroTotal');
@@ -151,42 +183,31 @@ function renderHero(p, day) {
   heroEl.title = fmt(total) + ' tokens';
   document.getElementById('heroCost').textContent = fmtCost(p.cost_usd);
 
-  const cw  = pct(claude.total,   total);
-  const xw  = pct(codex.total,    total);
-  const ocw = pct(opencode.total, total);
-  const oclw = Math.max(0, 100 - cw - xw - ocw);
-  document.getElementById('heroSplitbar').innerHTML =
-    `<span class="claude"   style="width:${cw}%"></span>` +
-    `<span class="codex"    style="width:${xw}%"></span>` +
-    `<span class="opencode" style="width:${ocw}%"></span>` +
-    `<span class="openclaw" style="width:${oclw}%"></span>`;
+  let remaining = 100;
+  document.getElementById('heroSplitbar').innerHTML = rows.map((row, index) => {
+    const width = index === rows.length - 1 ? Math.max(0, remaining) : row.pct;
+    remaining -= width;
+    return `<span style="width:${width}%;background:${row.color}"></span>`;
+  }).join('');
 
-  const rows = [
-    ['claude',   'Claude',   claude.total],
-    ['codex',    'Codex',    codex.total],
-    ['opencode', 'Opencode', opencode.total],
-    ['openclaw', 'Openclaw', openclaw.total],
-  ].filter(([,, t]) => t > 0);
   document.getElementById('heroSplitLegend').innerHTML = rows
-    .map(([cls, name, t]) =>
-      `<div class="split-row"><span class="dot ${cls}"></span><span class="label">${name}</span>` +
-      `<span class="value">${fmtCN(t)}</span><span class="pct">${pct(t, total)}%</span></div>`
+    .map((row) =>
+      `<div class="split-row"><span class="dot" style="background:${row.color}"></span><span class="label">${esc(row.label)}</span>` +
+      `<span class="value">${fmtCN(row.total)}</span><span class="pct">${row.pct}%</span></div>`
     ).join('');
 }
 
 // ---- 支撑数据卡（今日/本周/本月）----
 function statCard(label, p) {
-  const claude = p.by_source.claude || { total: 0 };
-  const codex = p.by_source.codex || { total: 0 };
+  const split = sourceRows(p.by_source || {}, p.total || 0)
+    .map((row) => `<span style="color:${row.color}">${esc(row.label)} ${fmtCN(row.total)}</span>`)
+    .join('');
   return `
     <div class="stat-card">
       <div class="s-label">${label}</div>
       <div class="s-value" title="${fmt(p.total)}">${fmtCN(p.total)}</div>
       <div class="s-cost">${fmtCost(p.cost_usd)}</div>
-      <div class="s-split">
-        <span class="cv">Claude ${fmtCN(claude.total)}</span>
-        <span class="xv">Codex ${fmtCN(codex.total)}</span>
-      </div>
+      <div class="s-split">${split}</div>
     </div>`;
 }
 
@@ -211,22 +232,38 @@ async function loadDaily() {
   const d = await getJSON('/api/daily?days=30');
   const labels = d.days.map((x) => x.date.slice(5));
   const ctx = document.getElementById('dailyChart').getContext('2d');
-
-  const gClaude = ctx.createLinearGradient(0, 0, 0, 260);
-  gClaude.addColorStop(0, 'rgba(249,115,22,0.18)');
-  gClaude.addColorStop(1, 'rgba(249,115,22,0)');
-  const gCodex = ctx.createLinearGradient(0, 0, 0, 260);
-  gCodex.addColorStop(0, 'rgba(34,197,94,0.18)');
-  gCodex.addColorStop(1, 'rgba(34,197,94,0)');
+  const sources = (d.sources && d.sources.length ? d.sources : SOURCE_ORDER)
+    .filter((source) => d.days.some((day) => (day[source] || 0) > 0));
+  const chartSources = sources.length ? sources : ['claude', 'codex'];
+  const legend = document.getElementById('dailyLegend');
+  if (legend) {
+    legend.innerHTML = chartSources.map((source) => {
+      const meta = metaForSource(source);
+      return `<span><span class="dot" style="background:${meta.color}"></span>${esc(meta.label)}</span>`;
+    }).join('');
+  }
+  const datasets = chartSources.map((source) => {
+    const meta = metaForSource(source);
+    const gradient = ctx.createLinearGradient(0, 0, 0, 260);
+    gradient.addColorStop(0, rgba(meta.color, 0.18));
+    gradient.addColorStop(1, rgba(meta.color, 0));
+    return {
+      label: meta.label,
+      data: d.days.map((x) => x[source] || 0),
+      borderColor: meta.color,
+      backgroundColor: gradient,
+      fill: true,
+      tension: 0.35,
+      pointRadius: 0,
+      borderWidth: 2,
+    };
+  });
 
   const cfg = {
     type: 'line',
     data: {
       labels,
-      datasets: [
-        { label: 'Claude', data: d.days.map((x) => x.claude), borderColor: '#f97316', backgroundColor: gClaude, fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2 },
-        { label: 'Codex', data: d.days.map((x) => x.codex), borderColor: '#22c55e', backgroundColor: gCodex, fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2 },
-      ],
+      datasets,
     },
     options: {
       responsive: true,
@@ -249,8 +286,8 @@ async function loadDaily() {
         },
       },
       scales: {
-        x: { grid: { color: 'rgba(30,32,36,0.8)' }, ticks: { color: '#5f6065', font: { family: "Inter, 'PingFang SC', sans-serif", size: 10 }, maxTicksLimit: 12 } },
-        y: { grid: { color: 'rgba(30,32,36,0.8)' }, ticks: { color: '#5f6065', font: { family: "Inter, 'PingFang SC', sans-serif", size: 10 }, callback: (v) => fmtCN(v) } },
+        x: { grid: { color: 'rgba(30,32,36,0.8)' }, ticks: { color: '#5f6065', font: { family: "Inter, 'PingFang SC', sans-serif", size: 12 }, maxTicksLimit: 12 } },
+        y: { grid: { color: 'rgba(30,32,36,0.8)' }, ticks: { color: '#5f6065', font: { family: "Inter, 'PingFang SC', sans-serif", size: 12 }, callback: (v) => fmtCN(v) } },
       },
     },
   };

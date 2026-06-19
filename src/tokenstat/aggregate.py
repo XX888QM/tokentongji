@@ -2,8 +2,9 @@
 
 口径：
 - 按 date_local（Asia/Shanghai 本地日）分桶。
-- 归一化总量 total = input + output + cache_read + cache_creation
-  （reasoning 是 output 的子集，不计入 total，避免重复）。
+- 归一化总量 total = input + output + cache_read + cache_creation。
+  Codex 的 reasoning 是 output 子集，不重复计；Opencode 的 reasoning 独立于
+  output，上屏与计费时并入 output。
 - 费用按 pricing 单价、逐 (source, model) 行计算后再汇总。
 """
 
@@ -14,7 +15,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from . import pricing as pricing_mod
-from .models import _LOCAL_TZ, project_display
+from .models import SOURCE_OPENCODE, VALID_SOURCES, _LOCAL_TZ, project_display
 
 
 def _today_local() -> date:
@@ -44,17 +45,26 @@ def period_range(period: str, today: Optional[date] = None) -> tuple[str, str]:
 def _row_total(r: dict) -> int:
     return (
         r["input"]
-        + r["output"]
+        + _row_output(r)
         + r["cache_read"]
         + r["cache_creation"]
     )
 
 
+def _row_output(r: dict) -> int:
+    output = int(r["output"] or 0)
+    if r.get("source") == SOURCE_OPENCODE:
+        output += int(r.get("reasoning") or 0)
+    return output
+
+
 def _total_sql(alias: str = "") -> str:
     p = f"{alias}." if alias else ""
+    source_col = f"{p}source"
     return (
         f"{p}input_tokens + {p}output_tokens + "
-        f"{p}cache_read_tokens + {p}cache_creation_tokens"
+        f"{p}cache_read_tokens + {p}cache_creation_tokens + "
+        f"CASE WHEN {source_col} = '{SOURCE_OPENCODE}' THEN {p}reasoning_tokens ELSE 0 END"
     )
 
 
@@ -62,7 +72,7 @@ def _cost_from_row(r: dict, pricing: dict) -> float:
     return pricing_mod.cost_for(
         r["model"],
         input_tokens=r["input"],
-        output_tokens=r["output"],
+        output_tokens=_row_output(r),
         cache_read_tokens=r["cache_read"],
         cache_creation_tokens=r["cache_creation"],
         reasoning_tokens=r.get("reasoning", 0),
@@ -99,15 +109,7 @@ def _period_summary(conn: sqlite3.Connection, period: str, pricing: dict) -> dic
     by_source: dict[str, dict] = {}
     for r in rows:
         rt = _row_total(r)
-        rc = pricing_mod.cost_for(
-            r["model"],
-            input_tokens=r["input"],
-            output_tokens=r["output"],
-            cache_read_tokens=r["cache_read"],
-            cache_creation_tokens=r["cache_creation"],
-            reasoning_tokens=r["reasoning"],
-            pricing=pricing,
-        )
+        rc = _cost_from_row(r, pricing)
         total += rt
         cost += rc
         src = by_source.setdefault(r["source"], {"total": 0, "cost_usd": 0.0})
@@ -138,14 +140,13 @@ def summary(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
 
 
 def daily(conn: sqlite3.Connection, days: int = 30) -> dict:
-    """近 N 天每日总 token，按来源拆 claude/codex；补齐缺失日期为 0。"""
+    """近 N 天每日总 token，按来源拆分；补齐缺失日期为 0。"""
     today = _today_local()
     start = (today - timedelta(days=days - 1)).isoformat()
     cur = conn.execute(
-        """
+        f"""
         SELECT date_local, source,
-               SUM(input_tokens + output_tokens + cache_read_tokens
-                   + cache_creation_tokens) AS total
+               SUM({_total_sql()}) AS total
         FROM usage_events
         WHERE date_local >= ?
         GROUP BY date_local, source
@@ -154,15 +155,20 @@ def daily(conn: sqlite3.Connection, days: int = 30) -> dict:
     )
     table: dict[str, dict[str, int]] = {}
     for row in cur.fetchall():
-        d = table.setdefault(row["date_local"], {"claude": 0, "codex": 0})
+        d = table.setdefault(row["date_local"], {source: 0 for source in VALID_SOURCES})
         d[row["source"]] = d.get(row["source"], 0) + int(row["total"])
 
     out = []
     for i in range(days):
         d = (today - timedelta(days=days - 1 - i)).isoformat()
-        rec = table.get(d, {"claude": 0, "codex": 0})
-        out.append({"date": d, "claude": rec.get("claude", 0), "codex": rec.get("codex", 0)})
-    return {"days": out}
+        rec = {source: 0 for source in VALID_SOURCES}
+        rec.update(table.get(d, {}))
+        out.append({"date": d, **rec, "total": sum(rec.values())})
+    active_sources = [
+        source for source in VALID_SOURCES
+        if any(day.get(source, 0) for day in out)
+    ]
+    return {"days": out, "sources": active_sources}
 
 
 def breakdown(
@@ -202,7 +208,7 @@ def breakdown(
             },
         )
         m["input"] += r["input"]
-        m["output"] += r["output"]
+        m["output"] += _row_output(r)
         m["cache_read"] += r["cache_read"]
         m["cache_creation"] += r["cache_creation"]
         m["total"] += rt
@@ -447,7 +453,7 @@ def session_detail(
     params = (session_id, start, end)
 
     rows = conn.execute(
-        """
+        f"""
         SELECT source, model, project,
                SUM(input_tokens) AS input,
                SUM(output_tokens) AS output,
@@ -458,9 +464,9 @@ def session_detail(
                MIN(date_local) AS first_date,
                MAX(date_local) AS last_date
         FROM usage_events
-        WHERE """ + base_where + """
+        WHERE {base_where}
         GROUP BY source, model, project
-        ORDER BY SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens) DESC
+        ORDER BY SUM({_total_sql()}) DESC
         """,
         params,
     ).fetchall()
@@ -486,7 +492,7 @@ def session_detail(
             "project": project_display(r["project"]),
             "cwd": r["project"],
             "input": int(r["input"] or 0),
-            "output": int(r["output"] or 0),
+            "output": _row_output(r),
             "cache_read": int(r["cache_read"] or 0),
             "cache_creation": int(r["cache_creation"] or 0),
             "reasoning": int(r["reasoning"] or 0),
@@ -647,18 +653,18 @@ def insights(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
         cards.append({
             "level": "info",
             "title": "最大模型贡献",
-            "body": f"{r['source']} / {r['model']} 贡献 {rt:,} tokens，估算 ${_cost_from_row(r, pricing):.2f}。",
+            "body": f"{r['source']} / {r['model']} 贡献 {rt:,} tokens。",
         })
 
     cache_row = conn.execute(
         """
         SELECT SUM(input_tokens) AS input,
                SUM(cache_read_tokens) AS cache_read,
-               SUM(output_tokens) AS output
+               SUM(output_tokens + CASE WHEN source = ? THEN reasoning_tokens ELSE 0 END) AS output
         FROM usage_events
         WHERE date_local BETWEEN ? AND ?
         """,
-        (start_today, end_today),
+        (SOURCE_OPENCODE, start_today, end_today),
     ).fetchone()
     input_total = int((cache_row["input"] or 0) + (cache_row["cache_read"] or 0))
     cache_read = int(cache_row["cache_read"] or 0)

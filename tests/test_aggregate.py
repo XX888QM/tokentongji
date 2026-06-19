@@ -91,6 +91,68 @@ class TestAggregateQueries(unittest.TestCase):
         self.assertEqual(today["claude"], 3_000_000)
         self.assertEqual(today["codex"], 600_000)
 
+    def test_daily_includes_all_sources(self):
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-06"), source="claude", model="known",
+                            project="/tmp/a", input_tokens=10, total_tokens=10,
+                            dedup_key="daily-claude"),
+                UsageRecord(ts=_ts("2026-06-06"), source="codex", model="known",
+                            project="/tmp/b", input_tokens=20, total_tokens=20,
+                            dedup_key="daily-codex"),
+                UsageRecord(ts=_ts("2026-06-06"), source="opencode", model="known",
+                            project="/tmp/c", input_tokens=30, total_tokens=30,
+                            dedup_key="daily-opencode"),
+                UsageRecord(ts=_ts("2026-06-06"), source="openclaw", model="known",
+                            project="/tmp/d", input_tokens=40, total_tokens=40,
+                            dedup_key="daily-openclaw"),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+                d = aggregate.daily(conn, days=1)
+        finally:
+            conn.close()
+
+        self.assertEqual(d["sources"], ["claude", "codex", "opencode", "openclaw"])
+        day = d["days"][0]
+        self.assertEqual(day["claude"], 10)
+        self.assertEqual(day["codex"], 20)
+        self.assertEqual(day["opencode"], 30)
+        self.assertEqual(day["openclaw"], 40)
+        self.assertEqual(day["total"], 100)
+
+    def test_opencode_reasoning_counts_as_output(self):
+        conn = db.get_conn(":memory:")
+        pricing_for_test = {
+            "default": {"input": 1, "output": 1, "cache_read": 1,
+                        "cache_write_5m": 1, "cache_write_1h": 1},
+            "anthropic": {},
+            "openai": {},
+            "deepseek": {},
+        }
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-06"), source="opencode", model="deepseek-v4-pro",
+                            project="/tmp/opencode", input_tokens=10_000_000, output_tokens=20_000_000,
+                            reasoning_tokens=5_000_000, cache_read_tokens=7_000_000, total_tokens=42_000_000,
+                            dedup_key="opencode-reasoning"),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+                s = aggregate.summary(conn, pricing_for_test)
+                d = aggregate.daily(conn, days=1)
+                b = aggregate.breakdown(conn, "today", pricing_for_test)
+        finally:
+            conn.close()
+
+        self.assertEqual(s["periods"]["today"]["total"], 42_000_000)
+        self.assertEqual(s["periods"]["today"]["by_source"]["opencode"]["total"], 42_000_000)
+        self.assertAlmostEqual(s["periods"]["today"]["cost_usd"], 42.0, places=4)
+        self.assertEqual(d["days"][0]["opencode"], 42_000_000)
+        self.assertEqual(b["by_model"][0]["output"], 25_000_000)
+        self.assertEqual(b["by_model"][0]["total"], 42_000_000)
+
     def test_meta(self):
         m = aggregate.meta(self.conn)
         self.assertEqual(m["total_events"], 3)

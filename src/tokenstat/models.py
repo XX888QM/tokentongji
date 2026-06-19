@@ -1,6 +1,6 @@
 """归一化的 token 使用记录数据模型。
 
-两个解析器（Claude / Codex）都产出同构的 ``UsageRecord``，
+    各来源解析器都产出同构的 ``UsageRecord``，
 下游入库与聚合只认这一种结构。记录不可变（frozen dataclass）。
 """
 
@@ -43,12 +43,12 @@ class UsageRecord:
     - input_tokens = 全价输入（已剔除缓存命中部分）。
     - cache_read_tokens = 缓存命中输入。
     - cache_creation_tokens = 缓存写入（仅 Claude）。
-    - output_tokens 已含 reasoning；reasoning_tokens 仅作展示。
-    - total_tokens = input + output + cache_read + cache_creation。
+    - output_tokens = 普通输出；Codex 已含 reasoning，Opencode 将 reasoning 单独保留。
+    - total_tokens = 来源原始总量；聚合层按来源口径避免 reasoning 重复或漏计。
     """
 
     ts: int  # epoch 秒（UTC）
-    source: str  # "claude" | "codex"
+    source: str  # "claude" | "codex" | "opencode" | "openclaw"
     model: str
     project: str  # 完整 cwd 绝对路径（分组键）
     input_tokens: int = 0

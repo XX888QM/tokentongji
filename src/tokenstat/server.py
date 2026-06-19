@@ -71,6 +71,7 @@ def _path_status(path: Path) -> dict:
         "path": str(path),
         "exists": path.exists(),
         "is_dir": path.is_dir(),
+        "is_file": path.is_file(),
     }
 
 
@@ -235,6 +236,8 @@ class Handler(BaseHTTPRequestHandler):
         data["data_sources"] = {
             "claude": _path_status(config.CLAUDE_PROJECTS_DIR),
             "codex": [_path_status(path) for path in config.CODEX_SESSION_DIRS],
+            "opencode": _path_status(config.OPENCODE_DB_PATH),
+            "openclaw": _path_status(config.OPENCLAW_SESSION_DIR),
         }
         self._send_json(data)
 

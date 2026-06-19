@@ -157,7 +157,8 @@ def cost_for(
     - input_tokens = 全价输入（已剔除缓存）。
     - cache_read_tokens = 缓存命中，低价。
     - cache_creation_tokens = 缓存写入（仅 Claude）。
-    - output_tokens 已含 reasoning，reasoning_tokens 仅展示、不另计费。
+    - output_tokens 应为计费输出；若来源把 reasoning 单列，调用方需先并入 output。
+      reasoning_tokens 仅展示、不另计费。
     """
     if pricing is None:
         pricing = load_pricing()
