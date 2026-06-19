@@ -1,195 +1,146 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Token 统计 · Furnace Ledger</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="/static/styles.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token 统计</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/static/styles.css" />
+<script src="/static/chart.min.js"></script>
 </head>
 <body>
-  <!-- 用量告警横幅 -->
-  <div class="alert-bar" id="alertBar" style="display:none">
-    <span class="alert-icon">⚠</span>
+<div class="app">
+  <!-- Alert -->
+  <div class="alert" id="alertBar" style="display:none">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
     <span id="alertMsg"></span>
-    <button class="alert-close" onclick="dismissAlert()">×</button>
+    <button class="close" onclick="dismissAlert()">&times;</button>
   </div>
 
-  <!-- 告警设置弹窗 -->
-  <div class="settings-modal" id="settingsModal" style="display:none">
-    <div class="settings-inner">
-      <div class="settings-title">用量告警设置</div>
-      <div class="settings-row">
-        <label>今日费用超过 ¥</label>
-        <input type="number" id="alertCost" min="0" step="0.1" placeholder="留空不告警">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+      <h1>Token 统计</h1>
+    </div>
+    <div class="header-right">
+      <div class="header-meta">
+        <span class="live">在线</span>
+        <span id="meta" style="display:block">加载中…</span>
       </div>
-      <div class="settings-row">
-        <label>今日 Token 超过（万）</label>
-        <input type="number" id="alertTokens" min="0" step="1" placeholder="留空不告警">
-      </div>
-      <div class="settings-row settings-check">
-        <label for="desktopNotify">启用 macOS 通知</label>
-        <input type="checkbox" id="desktopNotify">
-      </div>
-      <div class="settings-actions">
-        <button onclick="saveSettings()">保存</button>
-        <button onclick="toggleSettings()">取消</button>
+      <button class="btn-ghost" onclick="toggleSettings()">⚙ 告警设置</button>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-card">
+      <div class="hero-label" id="heroRange">今日消耗</div>
+      <div class="hero-number" id="heroTotal" title="">—</div>
+      <div class="hero-foot">
+        <span class="hero-cost">预估费用 <strong id="heroCost">¥—</strong></span>
       </div>
     </div>
-  </div>
+    <div class="hero-card">
+      <div class="hero-sub">各来源占比</div>
+      <div class="splitbar" id="heroSplitbar"></div>
+      <div class="split-legend" id="heroSplitLegend"></div>
+    </div>
+  </section>
 
-  <div class="grain" aria-hidden="true"></div>
-  <div class="ember-glow" aria-hidden="true"></div>
+  <!-- Stat cards -->
+  <section class="stats" id="stats"></section>
 
-  <div class="wrap">
-    <header class="masthead">
-      <div class="brand">
-        <span class="brand-mark" aria-label="GPT">
-          <svg viewBox="0 0 48 48" role="img" aria-hidden="true">
-            <circle class="brand-mark-bg" cx="24" cy="24" r="22"></circle>
-            <path class="brand-mark-line" d="M24 10.5c4 0 7.3 2.5 8.6 5.9 3.6.7 6.3 3.8 6.3 7.6 0 3.3-2.1 6.2-5 7.3-.5 3.9-3.8 6.9-7.8 6.9-2.1 0-4-.8-5.4-2.1-3.6.7-7.3-1.2-8.8-4.7-1.3-3-.5-6.5 1.7-8.6-.8-3.8 1.2-7.8 4.9-9.4 1.9-.8 3.9-.7 5.5.1z"></path>
-            <path class="brand-mark-line" d="M18.8 15.1l6.2 3.6 6.2-3.6M25 18.7v7.3l-6.2 3.6M25 26l6.2 3.6M14.1 22.5l6.3 3.6M33.6 26.1l4.2-2.4M20.7 36.1v-7.2"></path>
-          </svg>
-        </span>
-        <div class="brand-text">
-          <h1>Token 统计</h1>
-          <span class="brand-sub">FURNACE&nbsp;LEDGER · CLAUDE × CODEX</span>
-        </div>
-      </div>
-      <div class="masthead-right">
-        <button class="settings-btn" onclick="toggleSettings()" title="告警设置">⚙</button>
-        <div class="meta" id="meta">加载中…</div>
-      </div>
-    </header>
+  <!-- Audit -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>运行审计</h2>
+      <span class="status-pill" id="auditStatus">检查中</span>
+    </div>
+    <div class="audit-grid">
+      <div class="audit-block"><h3>数据源</h3><div id="auditSources"></div></div>
+      <div class="audit-block"><h3>入库状态</h3><div id="auditIngest"></div></div>
+      <div class="audit-block"><h3>口径风险</h3><div id="auditIssues"></div></div>
+    </div>
+  </section>
 
-    <!-- HERO：今年烧掉多少 token -->
-    <section class="hero">
-      <div class="hero-left">
-        <div class="hero-label" id="heroRange">今日烧掉</div>
-        <div class="hero-number" id="heroTotal" title="">—</div>
-        <div class="hero-foot">
-          <span class="hero-unit">TOKENS</span>
-          <span class="hero-dot">·</span>
-          <span class="hero-cost" id="heroCost">—</span>
-        </div>
-      </div>
-      <div class="hero-right">
-        <div class="split-title">各来源占比</div>
-        <div class="splitbar" id="heroSplitbar"></div>
-        <div class="split-legend" id="heroSplitLegend"></div>
-      </div>
-    </section>
+  <!-- Insights -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>异常洞察</h2>
+      <span class="panel-note" id="insightDate">今日</span>
+    </div>
+    <div class="insight-cards" id="insightCards"></div>
+  </section>
 
-    <!-- 支撑数据：今日 / 本周 / 本月 -->
-    <section class="stats" id="stats"></section>
-
-    <!-- 运行审计 + 异常洞察 -->
-    <section class="panel audit-panel">
-      <div class="panel-head">
-        <h2>运行审计</h2>
-        <span class="status-pill" id="auditStatus">检查中</span>
+  <!-- Breakdown -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>拆分明细</h2>
+      <div class="period-toggle" id="periodToggle">
+        <button data-period="today" class="active">今日</button>
+        <button data-period="week">本周</button>
+        <button data-period="month">本月</button>
+        <button data-period="year">今年</button>
       </div>
-      <div class="audit-grid">
-        <div class="audit-block">
-          <h3>数据源</h3>
-          <div id="auditSources" class="kv-list"></div>
-        </div>
-        <div class="audit-block">
-          <h3>入库状态</h3>
-          <div id="auditIngest" class="kv-list"></div>
-        </div>
-        <div class="audit-block">
-          <h3>口径风险</h3>
-          <div id="auditIssues" class="issue-list"></div>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel insights-panel">
-      <div class="panel-head">
-        <h2>异常洞察</h2>
-        <span class="panel-note" id="insightDate">今日</span>
-      </div>
-      <div class="insight-cards" id="insightCards"></div>
-    </section>
-
-    <!-- 拆分明细 -->
-    <section class="panel">
-      <div class="panel-head">
-        <h2>拆分明细</h2>
-        <div class="period-toggle" id="periodToggle">
-          <button data-period="today" class="active">今日</button>
-          <button data-period="week">本周</button>
-          <button data-period="month">本月</button>
-          <button data-period="year">今年</button>
-        </div>
-      </div>
-      <div class="tables">
-        <div class="table-block">
-          <h3>按模型</h3>
-          <table id="modelTable">
-            <thead>
-              <tr><th>模型</th><th>源</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存读</th><th class="num">缓存写</th><th class="num">合计</th><th class="num">费用</th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div class="table-block">
-          <h3>按项目</h3>
-          <table id="projectTable">
-            <thead>
-              <tr><th>项目</th><th>源</th><th class="num">合计</th><th class="num">费用</th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- 趋势图 -->
-    <section class="panel chart-panel">
-      <div class="panel-head">
-        <h2>近 30 天 · 每日消耗</h2>
-        <div class="legend">
-          <span class="dot claude"></span>Claude
-          <span class="dot codex"></span>Codex
-        </div>
-      </div>
-      <div class="chart-wrap">
-        <canvas id="dailyChart"></canvas>
-      </div>
-    </section>
-
-    <!-- Top 10 最贵会话 -->
-    <section class="panel">
-      <div class="panel-head">
-        <h2>TOP 10 · 最贵会话</h2>
-      </div>
-      <div class="table-block" style="overflow-x:auto">
-        <table id="topSessionsTable">
-          <thead>
-            <tr>
-              <th class="num">#</th>
-              <th>日期</th>
-              <th>项目</th>
-              <th>模型</th>
-              <th>源</th>
-              <th class="num">Tokens</th>
-              <th class="num">估算费用</th>
-            </tr>
-          </thead>
+    </div>
+    <div class="tables">
+      <div class="table-block">
+        <h3>按模型</h3>
+        <table id="modelTable">
+          <thead><tr><th>模型</th><th>源</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存读</th><th class="num">缓存写</th><th class="num">合计</th><th class="num">费用</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
-      <div class="session-detail" id="sessionDetail" hidden></div>
-    </section>
+      <div class="table-block">
+        <h3>按项目</h3>
+        <table id="projectTable">
+          <thead><tr><th>项目</th><th>源</th><th class="num">合计</th><th class="num">费用</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
 
-    <footer class="footer">
-      <span id="pricingNote"></span>
-    </footer>
+  <!-- Chart -->
+  <section class="panel">
+    <div class="panel-head">
+      <h2>近 30 天消耗趋势</h2>
+      <div class="chart-legend">
+        <span><span class="dot claude"></span>Claude</span>
+        <span><span class="dot codex"></span>Codex</span>
+      </div>
+    </div>
+    <div class="chart-wrap"><canvas id="dailyChart"></canvas></div>
+  </section>
+
+  <!-- Top sessions -->
+  <section class="panel">
+    <div class="panel-head"><h2>TOP 10 最贵会话</h2></div>
+    <table id="topSessionsTable">
+      <thead><tr><th class="num">#</th><th>日期</th><th>项目</th><th>模型</th><th>源</th><th class="num">Tokens</th><th class="num">费用</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="session-detail" id="sessionDetail" hidden></div>
+  </section>
+
+  <footer class="footer"><span id="pricingNote"></span></footer>
+</div>
+
+<!-- Settings modal -->
+<div class="modal-overlay" id="settingsModal" style="display:none">
+  <div class="modal">
+    <h3>用量告警设置</h3>
+    <div class="modal-row"><label>今日费用超过 ¥</label><input type="number" id="alertCost" min="0" step="0.1" placeholder="不告警"></div>
+    <div class="modal-row"><label>今日 Token 超过（万）</label><input type="number" id="alertTokens" min="0" step="1" placeholder="不告警"></div>
+    <div class="modal-row"><label>启用桌面通知</label><input type="checkbox" id="desktopNotify"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="toggleSettings()">取消</button>
+      <button class="btn primary" onclick="saveSettings()">保存</button>
+    </div>
   </div>
+</div>
 
-  <script src="/static/chart.min.js"></script>
-  <script src="/static/app.js"></script>
+<script src="/static/app.js"></script>
 </body>
 </html>

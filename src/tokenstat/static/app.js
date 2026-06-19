@@ -145,21 +145,21 @@ function renderHero(p, day) {
   const openclaw = src.openclaw || { total: 0, cost_usd: 0 };
   const total = p.total || 0;
 
-  document.getElementById('heroRange').textContent = `今日烧掉 · ${day}`;
+  document.getElementById('heroRange').textContent = `今日消耗 · ${day}`;
   const heroEl = document.getElementById('heroTotal');
   heroEl.textContent = fmtCN(total);
   heroEl.title = fmt(total) + ' tokens';
-  document.getElementById('heroCost').textContent = '估算 ' + fmtCost(p.cost_usd);
+  document.getElementById('heroCost').textContent = fmtCost(p.cost_usd);
 
   const cw  = pct(claude.total,   total);
   const xw  = pct(codex.total,    total);
   const ocw = pct(opencode.total, total);
   const oclw = Math.max(0, 100 - cw - xw - ocw);
   document.getElementById('heroSplitbar').innerHTML =
-    `<span class="seg-claude"   style="width:${cw}%"></span>` +
-    `<span class="seg-codex"    style="width:${xw}%"></span>` +
-    `<span class="seg-opencode" style="width:${ocw}%"></span>` +
-    `<span class="seg-openclaw" style="width:${oclw}%"></span>`;
+    `<span class="claude"   style="width:${cw}%"></span>` +
+    `<span class="codex"    style="width:${xw}%"></span>` +
+    `<span class="opencode" style="width:${ocw}%"></span>` +
+    `<span class="openclaw" style="width:${oclw}%"></span>`;
 
   const rows = [
     ['claude',   'Claude',   claude.total],
@@ -169,8 +169,8 @@ function renderHero(p, day) {
   ].filter(([,, t]) => t > 0);
   document.getElementById('heroSplitLegend').innerHTML = rows
     .map(([cls, name, t]) =>
-      `<div class="split-row"><span class="sw ${cls}"></span><span class="nm">${name}</span>` +
-      `<span class="vl">${fmtCN(t)}</span><span class="pc">${pct(t, total)}%</span></div>`
+      `<div class="split-row"><span class="dot ${cls}"></span><span class="label">${name}</span>` +
+      `<span class="value">${fmtCN(t)}</span><span class="pct">${pct(t, total)}%</span></div>`
     ).join('');
 }
 
@@ -179,10 +179,10 @@ function statCard(label, p) {
   const claude = p.by_source.claude || { total: 0 };
   const codex = p.by_source.codex || { total: 0 };
   return `
-    <div class="stat">
+    <div class="stat-card">
       <div class="s-label">${label}</div>
-      <div class="s-total" title="${fmt(p.total)}">${fmtCN(p.total)}</div>
-      <div class="s-cost">估算 ${fmtCost(p.cost_usd)}</div>
+      <div class="s-value" title="${fmt(p.total)}">${fmtCN(p.total)}</div>
+      <div class="s-cost">${fmtCost(p.cost_usd)}</div>
       <div class="s-split">
         <span class="cv">Claude ${fmtCN(claude.total)}</span>
         <span class="xv">Codex ${fmtCN(codex.total)}</span>
@@ -199,8 +199,8 @@ async function loadSummary() {
     statCard('本周', s.periods.week) +
     statCard('本月', s.periods.month) +
     statCard('今年', s.periods.year);
-  document.getElementById('meta').innerHTML =
-    `更新于 ${s.generated_at}<br>每 ${s.refresh_sec}s 自动刷新`;
+  document.getElementById('meta').textContent =
+    `更新于 ${s.generated_at} · 每 ${s.refresh_sec}s`;
   document.getElementById('pricingNote').textContent = s.pricing_note || '';
   checkAlert(s.periods.today);
   return s.refresh_sec || 30;
@@ -212,20 +212,20 @@ async function loadDaily() {
   const labels = d.days.map((x) => x.date.slice(5));
   const ctx = document.getElementById('dailyChart').getContext('2d');
 
-  const gClaude = ctx.createLinearGradient(0, 0, 0, 320);
-  gClaude.addColorStop(0, 'rgba(232,121,79,0.32)');
-  gClaude.addColorStop(1, 'rgba(232,121,79,0)');
-  const gCodex = ctx.createLinearGradient(0, 0, 0, 320);
-  gCodex.addColorStop(0, 'rgba(70,181,150,0.28)');
-  gCodex.addColorStop(1, 'rgba(70,181,150,0)');
+  const gClaude = ctx.createLinearGradient(0, 0, 0, 260);
+  gClaude.addColorStop(0, 'rgba(249,115,22,0.18)');
+  gClaude.addColorStop(1, 'rgba(249,115,22,0)');
+  const gCodex = ctx.createLinearGradient(0, 0, 0, 260);
+  gCodex.addColorStop(0, 'rgba(34,197,94,0.18)');
+  gCodex.addColorStop(1, 'rgba(34,197,94,0)');
 
   const cfg = {
     type: 'line',
     data: {
       labels,
       datasets: [
-        { label: 'Claude', data: d.days.map((x) => x.claude), borderColor: '#e8794f', backgroundColor: gClaude, fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2 },
-        { label: 'Codex', data: d.days.map((x) => x.codex), borderColor: '#46b596', backgroundColor: gCodex, fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2 },
+        { label: 'Claude', data: d.days.map((x) => x.claude), borderColor: '#f97316', backgroundColor: gClaude, fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2 },
+        { label: 'Codex', data: d.days.map((x) => x.codex), borderColor: '#22c55e', backgroundColor: gCodex, fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2 },
       ],
     },
     options: {
@@ -235,22 +235,22 @@ async function loadDaily() {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#17120f',
-          borderColor: '#2c211b',
+          backgroundColor: '#141618',
+          borderColor: '#1e2024',
           borderWidth: 1,
-          titleColor: '#f5ece2',
-          bodyColor: '#9c8d7e',
+          titleColor: '#ededef',
+          bodyColor: '#9b9ba0',
           padding: 10,
-          titleFont: { family: "-apple-system, 'PingFang SC', system-ui, sans-serif" },
-          bodyFont: { family: "-apple-system, 'PingFang SC', system-ui, sans-serif" },
+          titleFont: { family: "Inter, 'PingFang SC', sans-serif" },
+          bodyFont: { family: "Inter, 'PingFang SC', sans-serif" },
           callbacks: {
             label: (c) => `  ${c.dataset.label}: ${fmtCN(c.parsed.y)} (${fmt(c.parsed.y)})`,
           },
         },
       },
       scales: {
-        x: { grid: { color: 'rgba(44,33,27,0.6)' }, ticks: { color: '#6d5f53', font: { family: "-apple-system, 'PingFang SC', system-ui, sans-serif", size: 10 }, maxTicksLimit: 12 } },
-        y: { grid: { color: 'rgba(44,33,27,0.6)' }, ticks: { color: '#6d5f53', font: { family: "-apple-system, 'PingFang SC', system-ui, sans-serif", size: 10 }, callback: (v) => fmtCN(v) } },
+        x: { grid: { color: 'rgba(30,32,36,0.8)' }, ticks: { color: '#5f6065', font: { family: "Inter, 'PingFang SC', sans-serif", size: 10 }, maxTicksLimit: 12 } },
+        y: { grid: { color: 'rgba(30,32,36,0.8)' }, ticks: { color: '#5f6065', font: { family: "Inter, 'PingFang SC', sans-serif", size: 10 }, callback: (v) => fmtCN(v) } },
       },
     },
   };
