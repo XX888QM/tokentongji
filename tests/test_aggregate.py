@@ -152,6 +152,8 @@ class TestAggregateQueries(unittest.TestCase):
         self.assertEqual(d["days"][0]["opencode"], 42_000_000)
         self.assertEqual(b["by_model"][0]["output"], 25_000_000)
         self.assertEqual(b["by_model"][0]["total"], 42_000_000)
+        # reasoning 应并入 output 计费，breakdown cost 应与 summary 一致
+        self.assertAlmostEqual(b["by_model"][0]["cost_usd"], 42.0, places=4)
 
     def test_meta(self):
         m = aggregate.meta(self.conn)
@@ -188,6 +190,32 @@ class TestTopSessions(unittest.TestCase):
         self.assertEqual(s['source'], 'codex')
         self.assertEqual(s['project'], 'project-big')
         self.assertEqual(s['total'], 101)
+
+    def test_opencode_reasoning_cost_consistent_in_top_sessions(self):
+        """top_sessions cost_usd 应与 summary 口径一致：opencode reasoning 并入 output 计费。"""
+        pricing = {
+            "default": {"input": 1, "output": 1, "cache_read": 1,
+                        "cache_write_5m": 1, "cache_write_1h": 1},
+            "anthropic": {}, "openai": {}, "deepseek": {},
+        }
+        conn = db.get_conn(":memory:")
+        db.init_db(conn)
+        try:
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-06"), source="opencode", model="deepseek-v4-pro",
+                            project="/tmp/oc", input_tokens=10_000_000, output_tokens=20_000_000,
+                            reasoning_tokens=5_000_000, cache_read_tokens=7_000_000,
+                            total_tokens=42_000_000, session_id="oc-sess1",
+                            dedup_key="oc-top-test"),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+                sessions = aggregate.top_sessions(conn, "today", pricing, 10)["sessions"]
+                s_cost = aggregate.summary(conn, pricing)["periods"]["today"]["cost_usd"]
+        finally:
+            conn.close()
+        self.assertEqual(len(sessions), 1)
+        # top_sessions 费用应与 summary 一致（均为 $42）
+        self.assertAlmostEqual(sessions[0]["cost_usd"], s_cost, places=4)
 
 
 class TestAuditAndInsights(unittest.TestCase):

@@ -184,15 +184,7 @@ def breakdown(
     proj_map: dict[tuple, dict] = {}
     for r in rows:
         rt = _row_total(r)
-        rc = pricing_mod.cost_for(
-            r["model"],
-            input_tokens=r["input"],
-            output_tokens=r["output"],
-            cache_read_tokens=r["cache_read"],
-            cache_creation_tokens=r["cache_creation"],
-            reasoning_tokens=r["reasoning"],
-            pricing=pricing,
-        )
+        rc = _cost_from_row(r, pricing)
         mk = (r["source"], r["model"])
         m = model_map.setdefault(
             mk,
@@ -270,15 +262,7 @@ def top_sessions(
         r = dict(row)
         sid = r["session_id"]
         rt = _row_total(r)
-        rc = pricing_mod.cost_for(
-            r["model"],
-            input_tokens=r["input"],
-            output_tokens=r["output"],
-            cache_read_tokens=r["cache_read"],
-            cache_creation_tokens=r["cache_creation"],
-            reasoning_tokens=r["reasoning"],
-            pricing=pricing,
-        )
+        rc = _cost_from_row(r, pricing)
         if sid not in sess_map:
             sess_map[sid] = {
                 "session_id": sid,
