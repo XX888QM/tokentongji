@@ -243,7 +243,7 @@ body::before {
 .split-row .sw.codex { background: var(--codex); }
 .split-row .sw.opencode { background: var(--opencode); }
 .split-row .sw.openclaw { background: #d67cf2; }
-.split-row .nm { color: var(--muted); width: 52px; }
+.split-row .nm { color: var(--muted); min-width: 72px; }
 .split-row .vl { color: var(--text); font-weight: 500; }
 .split-row .pc { color: var(--faint); margin-left: auto; }
 
