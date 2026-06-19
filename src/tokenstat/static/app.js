@@ -423,27 +423,41 @@ async function loadSessionDetail(sessionId) {
 
 async function loadBreakdown() {
   const b = await getJSON(`/api/breakdown?period=${currentPeriod}`);
+  const mRows = b.by_model;
+  const mTotalTokens = mRows.reduce((s, r) => s + (r.total || 0), 0);
+  const mTotalCost   = mRows.reduce((s, r) => s + (r.cost_usd || 0), 0);
+  const mInput       = mRows.reduce((s, r) => s + (r.input || 0), 0);
+  const mOutput      = mRows.reduce((s, r) => s + (r.output || 0), 0);
+  const mCR          = mRows.reduce((s, r) => s + (r.cache_read || 0), 0);
+  const mCC          = mRows.reduce((s, r) => s + (r.cache_creation || 0), 0);
   document.querySelector('#modelTable tbody').innerHTML =
-    b.by_model
-      .map(
-        (r) => `<tr>
-          <td>${esc(modelDisplay(r.model))}</td><td>${badge(esc(r.source))}</td>
-          ${numCell(r.input)}${numCell(r.output)}${numCell(r.cache_read)}${numCell(r.cache_creation)}${numCell(r.total)}
-          <td class="num">${fmtCost(r.cost_usd)}</td>
-        </tr>`
-      )
-      .join('') || '<tr><td colspan="8">暂无数据</td></tr>';
+    mRows.map((r) => `<tr>
+        <td>${esc(modelDisplay(r.model))}</td><td>${badge(esc(r.source))}</td>
+        ${numCell(r.input)}${numCell(r.output)}${numCell(r.cache_read)}${numCell(r.cache_creation)}${numCell(r.total)}
+        <td class="num">${fmtCost(r.cost_usd)}</td>
+      </tr>`).join('') || '<tr><td colspan="8">暂无数据</td></tr>';
+  document.querySelector('#modelTable tfoot').innerHTML = mRows.length
+    ? `<tr class="tfoot-total">
+        <td colspan="2">合计</td>
+        ${numCell(mInput)}${numCell(mOutput)}${numCell(mCR)}${numCell(mCC)}${numCell(mTotalTokens)}
+        <td class="num">${fmtCost(mTotalCost)}</td>
+      </tr>` : '';
 
+  const pRows = b.by_project;
+  const pTotalTokens = pRows.reduce((s, r) => s + (r.total || 0), 0);
+  const pTotalCost   = pRows.reduce((s, r) => s + (r.cost_usd || 0), 0);
   document.querySelector('#projectTable tbody').innerHTML =
-    b.by_project
-      .map(
-        (r) => `<tr>
-          <td>${esc(r.project) || '(未知)'}</td><td>${badge(esc(r.source))}</td>
-          ${numCell(r.total)}
-          <td class="num">${fmtCost(r.cost_usd)}</td>
-        </tr>`
-      )
-      .join('') || '<tr><td colspan="4">暂无数据</td></tr>';
+    pRows.map((r) => `<tr>
+        <td>${esc(r.project) || '(未知)'}</td><td>${badge(esc(r.source))}</td>
+        ${numCell(r.total)}
+        <td class="num">${fmtCost(r.cost_usd)}</td>
+      </tr>`).join('') || '<tr><td colspan="4">暂无数据</td></tr>';
+  document.querySelector('#projectTable tfoot').innerHTML = pRows.length
+    ? `<tr class="tfoot-total">
+        <td colspan="2">合计</td>
+        ${numCell(pTotalTokens)}
+        <td class="num">${fmtCost(pTotalCost)}</td>
+      </tr>` : '';
 }
 
 async function refreshAll() {
