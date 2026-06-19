@@ -10,6 +10,8 @@ import json
 import platform
 import subprocess
 import threading
+import time
+import urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -19,6 +21,32 @@ import traceback
 from . import aggregate, config, db
 from . import pricing as pricing_mod
 from .models import _LOCAL_TZ
+
+# ---- 汇率缓存（1小时 TTL，失败降级到上次缓存值） ----
+_RATE_CACHE: dict = {"rate": 7.25, "ts": 0.0}
+_RATE_TTL = 3600
+_RATE_LOCK = threading.Lock()
+
+
+def _get_usd_cny_rate() -> float:
+    with _RATE_LOCK:
+        now = time.time()
+        if now - _RATE_CACHE["ts"] < _RATE_TTL:
+            return _RATE_CACHE["rate"]
+    try:
+        req = urllib.request.Request(
+            "https://open.er-api.com/v6/latest/USD",
+            headers={"User-Agent": "tokenstat/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read())
+        rate = float(data["rates"]["CNY"])
+        with _RATE_LOCK:
+            _RATE_CACHE["rate"] = rate
+            _RATE_CACHE["ts"] = time.time()
+        return rate
+    except Exception:
+        return _RATE_CACHE["rate"]
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -120,6 +148,8 @@ class Handler(BaseHTTPRequestHandler):
                 session_id = qs.get("session_id", [""])[0]
                 period = qs.get("period", ["today"])[0]
                 self._api_session_detail(session_id, period)
+            elif path == "/api/rates":
+                self._send_json({"usd_cny": _get_usd_cny_rate()})
             else:
                 self.send_error(404, "Not Found")
         except Exception:  # 任何 API 异常都回 JSON，不让连接挂死

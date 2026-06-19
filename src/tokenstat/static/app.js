@@ -16,6 +16,7 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 
 let dailyChart = null;
 let currentPeriod = 'today';
+let CNY_RATE = 7.25;
 
 // ---- 告警设置 ----
 function loadAlertConfig() {
@@ -52,8 +53,8 @@ function checkAlert(todayData) {
   if (sessionStorage.getItem('tokenstat_alert_dismissed')) return;
   const cfg = loadAlertConfig();
   const msgs = [];
-  if (cfg.daily_cost > 0 && todayData.cost_usd >= cfg.daily_cost)
-    msgs.push(`今日费用 ${fmtCost(todayData.cost_usd)} 已达告警阈值 ${fmtCost(cfg.daily_cost)}`);
+  if (cfg.daily_cost > 0 && todayData.cost_usd * CNY_RATE >= cfg.daily_cost)
+    msgs.push(`今日费用 ${fmtCost(todayData.cost_usd)} 已达告警阈值 ¥${(cfg.daily_cost).toFixed(2)}`);
   if (cfg.daily_tokens > 0 && todayData.total >= cfg.daily_tokens)
     msgs.push(`今日 Token ${fmtCN(todayData.total)} 已达告警阈值 ${fmtCN(cfg.daily_tokens)}`);
   const bar = document.getElementById('alertBar');
@@ -71,7 +72,7 @@ function checkAlert(todayData) {
 let refreshTimer = null;
 
 const fmt = (n) => (n == null ? '0' : Number(n).toLocaleString('en-US'));
-const fmtCost = (n) => '$' + (Number(n) || 0).toFixed(2);
+const fmtCost = (n) => '¥' + ((Number(n) || 0) * CNY_RATE).toFixed(2);
 
 function stripZeros(s) {
   return s.replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
@@ -427,9 +428,17 @@ function setupTopSessionDrilldown() {
   });
 }
 
+async function loadRates() {
+  try {
+    const r = await getJSON('/api/rates');
+    if (r.usd_cny > 0) CNY_RATE = r.usd_cny;
+  } catch (_) {}
+}
+
 async function main() {
   setupPeriodToggle();
   setupTopSessionDrilldown();
+  await loadRates();
   const sec = await refreshAll();
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(refreshAll, (sec || 30) * 1000);
