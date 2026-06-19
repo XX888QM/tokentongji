@@ -59,9 +59,8 @@ def _clean_model(model: str) -> str:
 
 def _merged_models(pricing: dict) -> dict:
     out = {}
-    out.update(pricing.get("anthropic", {}))
-    out.update(pricing.get("openai", {}))
-    out.update(pricing.get("deepseek", {}))
+    for section in ("anthropic", "openai", "deepseek", "local"):
+        out.update(pricing.get(section, {}))
     return out
 
 

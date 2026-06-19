@@ -24,6 +24,9 @@
     "deepseek-v4-pro":   { "input": 0.435, "output": 0.87,  "cache_read": 0.003625, "cache_write_5m": null, "cache_write_1h": null },
     "deepseek-v4-flash": { "input": 0.14,  "output": 0.28,  "cache_read": 0.0028,   "cache_write_5m": null, "cache_write_1h": null }
   },
+  "local": {
+    "gemma4:26b":        { "input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write_5m": null, "cache_write_1h": null }
+  },
   "openai": {
     "gpt-5.5":           { "input": 5.0,  "output": 30.0,  "cache_read": 0.50,  "cache_write_5m": null, "cache_write_1h": null },
     "gpt-5.5-pro":       { "input": 30.0, "output": 180.0, "cache_read": null,  "cache_write_5m": null, "cache_write_1h": null },
