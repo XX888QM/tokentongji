@@ -17,10 +17,11 @@ from pathlib import Path
 from typing import Iterator
 
 from . import config, db
-from .models import SOURCE_CLAUDE, SOURCE_CODEX
+from .models import SOURCE_CLAUDE, SOURCE_CODEX, SOURCE_OPENCLAW
 from .parsers import claude as claude_parser
 from .parsers import codex as codex_parser
 from .parsers import opencode as opencode_parser
+from .parsers import openclaw as openclaw_parser
 
 MAX_LINE_BYTES = 50 * 1024 * 1024
 
@@ -35,6 +36,12 @@ def codex_files() -> Iterator[Path]:
     for root in config.CODEX_SESSION_DIRS:
         if root.is_dir():
             yield from root.rglob("*.jsonl")
+
+
+def openclaw_files() -> Iterator[Path]:
+    root = config.OPENCLAW_SESSION_DIR
+    if root.is_dir():
+        yield from root.glob("*.trajectory.jsonl")
 
 
 def _should_read(state: dict | None, inode: int, size: int, mtime: float):
@@ -71,8 +78,7 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
         else None
     )
 
-    claude_recs = []
-    codex_recs = []
+    recs = []
     consumed = start_offset
     pos = start_offset
 
@@ -93,20 +99,19 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
                     continue
                 if source == SOURCE_CLAUDE:
                     rec = claude_parser.parse_record(obj, source_file, line_start)
-                    if rec is not None:
-                        claude_recs.append(rec)
-                else:
+                elif source == SOURCE_CODEX:
                     rec = codex_parser.process_record(obj, source_file, line_start, cstate)
-                    if rec is not None:
-                        codex_recs.append(rec)
+                else:
+                    rec = openclaw_parser.parse_record(obj, source_file, line_start)
+                if rec is not None:
+                    recs.append(rec)
     except OSError:
         return 0
 
     added = 0
-    if claude_recs:
-        added += db.insert_records(conn, claude_recs, on_conflict="max")
-    if codex_recs:
-        added += db.insert_records(conn, codex_recs, on_conflict="ignore")
+    if recs:
+        on_conflict = "max" if source == SOURCE_CLAUDE else "ignore"
+        added += db.insert_records(conn, recs, on_conflict=on_conflict)
 
     new_ctx = cstate.to_ctx() if cstate is not None else {}
     db.set_ingest_state(
@@ -165,6 +170,9 @@ def run_once() -> dict:
             records_added += _ingest_file(conn, path, SOURCE_CODEX, default_model)
             files_scanned += 1
         records_added += _ingest_opencode(conn)
+        for path in openclaw_files():
+            records_added += _ingest_file(conn, path, SOURCE_OPENCLAW, "")
+            files_scanned += 1
     finally:
         conn.close()
     return {"files_scanned": files_scanned, "records_added": records_added}

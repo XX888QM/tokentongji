@@ -26,6 +26,7 @@ CODEX_SESSION_DIRS = (
     HOME / ".codex" / "archived_sessions",
 )
 OPENCODE_DB_PATH = HOME / ".local" / "share" / "opencode" / "opencode.db"
+OPENCLAW_SESSION_DIR = HOME / ".openclaw" / "agents" / "main" / "sessions"
 
 # ---- 数据库 ----
 DATA_DIR = Path(os.environ.get("TOKENSTAT_DATA_DIR", str(Path(__file__).resolve().parent.parent.parent / "data")))

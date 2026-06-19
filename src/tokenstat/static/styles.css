@@ -69,9 +69,9 @@ body::before {
 
 .wrap {
   position: relative; z-index: 1;
-  max-width: 1180px;
+  max-width: 1600px;
   margin: 0 auto;
-  padding: 40px 28px 60px;
+  padding: 40px 36px 60px;
 }
 
 /* ---- 报头 ---- */
@@ -384,20 +384,22 @@ body::before {
   color: var(--faint); font-weight: 500; margin: 0 0 12px;
 }
 table { width: 100%; border-collapse: collapse; font-size: 15px; }
-#modelTable, #projectTable { table-layout: fixed; }
-#modelTable th:first-child, #projectTable th:first-child { width: 170px; }
+#modelTable { table-layout: fixed; }
+#modelTable th:first-child { width: 170px; }
 th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border-soft); }
 th { color: var(--faint); font-weight: 500; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
 td { color: var(--text); }
 /* 数字与单位绝不换行（避免「百/万」被拆成两行） */
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-#modelTable td:first-child, #projectTable td:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#modelTable td:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#projectTable td:first-child { white-space: nowrap; }
 tbody tr { transition: background .15s ease; }
 tbody tr:hover { background: var(--surface-2); }
 .badge { font-size: 13px; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.04em; }
 .badge.claude { background: rgba(232,121,79,.16); color: var(--claude); }
 .badge.codex { background: rgba(70,181,150,.16); color: var(--codex); }
 .badge.opencode { background: rgba(124,140,248,.16); color: var(--opencode); }
+.badge.openclaw { background: rgba(214,124,242,.16); color: #d67cf2; }
 .session-link {
   background: none;
   border: none;
