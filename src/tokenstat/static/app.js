@@ -6,7 +6,7 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // GET /api/summary
 //   { generated_at, refresh_sec, pricing_note,
 //     periods: { today: P, yesterday: P, week: P, month: P, year: P } }
-//   P = { total, cost_usd, by_source: { claude:{total,cost_usd}, codex:{total,cost_usd} } }
+//   P = { total, cost_usd, by_source: { claude, codex, opencode, openclaw } }  // 每个 = {total,cost_usd}
 // GET /api/daily?days=30           -> { days: [ {date, claude, codex} ] }
 // GET /api/breakdown?period=...    -> { period, by_model:[...], by_project:[...] }
 // GET /api/audit                   -> { status, meta, sources, ingest_state, issues, ... }
