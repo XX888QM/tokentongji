@@ -20,6 +20,7 @@ from . import config, db
 from .models import SOURCE_CLAUDE, SOURCE_CODEX
 from .parsers import claude as claude_parser
 from .parsers import codex as codex_parser
+from .parsers import opencode as opencode_parser
 
 MAX_LINE_BYTES = 50 * 1024 * 1024
 
@@ -120,8 +121,36 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
     return added
 
 
+def _ingest_opencode(conn) -> int:
+    """增量同步 opencode SQLite 数据库，返回新增记录数。"""
+    db_path = config.OPENCODE_DB_PATH
+    if not db_path.is_file():
+        return 0
+
+    state_key = opencode_parser.OPENCODE_STATE_KEY
+    state = db.get_ingest_state(conn, state_key)
+    since_ts_ms = int((state["ctx"] or {}).get("last_ts_ms", 0)) if state else 0
+
+    records, max_ts_ms = opencode_parser.fetch_records(db_path, since_ts_ms)
+
+    added = 0
+    if records:
+        added = db.insert_records(conn, records, on_conflict="ignore")
+
+    db.set_ingest_state(
+        conn,
+        state_key,
+        inode=0,
+        offset=0,
+        size=0,
+        mtime=0.0,
+        ctx={"last_ts_ms": max_ts_ms},
+    )
+    return added
+
+
 def run_once() -> dict:
-    """扫描两边全部文件，增量入库一次。返回统计 dict。"""
+    """扫描全部数据源，增量入库一次。返回统计 dict。"""
     config.ensure_data_dir()
     conn = db.get_conn(config.DB_PATH)
     db.init_db(conn)
@@ -135,6 +164,7 @@ def run_once() -> dict:
         for path in codex_files():
             records_added += _ingest_file(conn, path, SOURCE_CODEX, default_model)
             files_scanned += 1
+        records_added += _ingest_opencode(conn)
     finally:
         conn.close()
     return {"files_scanned": files_scanned, "records_added": records_added}

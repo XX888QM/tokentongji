@@ -15,6 +15,7 @@
   --ember-3: #ff543a;
   --claude: #e8794f;
   --codex: #46b596;
+  --opencode: #7c8cf8;
 
   /* 正常系统字体（无衬线），数字用 tabular-nums 对齐 */
   --ui: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", system-ui, "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
@@ -396,6 +397,7 @@ tbody tr:hover { background: var(--surface-2); }
 .badge { font-size: 13px; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.04em; }
 .badge.claude { background: rgba(232,121,79,.16); color: var(--claude); }
 .badge.codex { background: rgba(70,181,150,.16); color: var(--codex); }
+.badge.opencode { background: rgba(124,140,248,.16); color: var(--opencode); }
 .session-link {
   background: none;
   border: none;

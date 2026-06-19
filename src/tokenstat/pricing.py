@@ -28,6 +28,7 @@ _FALLBACK_PRICING = {
     "default": {"input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write_5m": 0.0, "cache_write_1h": 0.0},
     "anthropic": {},
     "openai": {},
+    "deepseek": {},
 }
 
 
@@ -60,6 +61,7 @@ def _merged_models(pricing: dict) -> dict:
     out = {}
     out.update(pricing.get("anthropic", {}))
     out.update(pricing.get("openai", {}))
+    out.update(pricing.get("deepseek", {}))
     return out
 
 
