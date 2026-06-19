@@ -138,8 +138,11 @@ async function maybeNotifyAlert(message) {
 
 // ---- HERO（今日）----
 function renderHero(p, day) {
-  const claude = p.by_source.claude || { total: 0, cost_usd: 0 };
-  const codex = p.by_source.codex || { total: 0, cost_usd: 0 };
+  const src = p.by_source || {};
+  const claude   = src.claude   || { total: 0, cost_usd: 0 };
+  const codex    = src.codex    || { total: 0, cost_usd: 0 };
+  const opencode = src.opencode || { total: 0, cost_usd: 0 };
+  const openclaw = src.openclaw || { total: 0, cost_usd: 0 };
   const total = p.total || 0;
 
   document.getElementById('heroRange').textContent = `今日烧掉 · ${day}`;
@@ -148,16 +151,27 @@ function renderHero(p, day) {
   heroEl.title = fmt(total) + ' tokens';
   document.getElementById('heroCost').textContent = '估算 ' + fmtCost(p.cost_usd);
 
-  const cw = pct(claude.total, total);
-  const xw = 100 - cw;
+  const cw  = pct(claude.total,   total);
+  const xw  = pct(codex.total,    total);
+  const ocw = pct(opencode.total, total);
+  const oclw = Math.max(0, 100 - cw - xw - ocw);
   document.getElementById('heroSplitbar').innerHTML =
-    `<span class="seg-claude" style="width:${cw}%"></span>` +
-    `<span class="seg-codex" style="width:${xw}%"></span>`;
-  document.getElementById('heroSplitLegend').innerHTML =
-    `<div class="split-row"><span class="sw claude"></span><span class="nm">Claude</span>` +
-    `<span class="vl">${fmtCN(claude.total)}</span><span class="pc">${cw}%</span></div>` +
-    `<div class="split-row"><span class="sw codex"></span><span class="nm">Codex</span>` +
-    `<span class="vl">${fmtCN(codex.total)}</span><span class="pc">${xw}%</span></div>`;
+    `<span class="seg-claude"   style="width:${cw}%"></span>` +
+    `<span class="seg-codex"    style="width:${xw}%"></span>` +
+    `<span class="seg-opencode" style="width:${ocw}%"></span>` +
+    `<span class="seg-openclaw" style="width:${oclw}%"></span>`;
+
+  const rows = [
+    ['claude',   'Claude',   claude.total],
+    ['codex',    'Codex',    codex.total],
+    ['opencode', 'Opencode', opencode.total],
+    ['openclaw', 'Openclaw', openclaw.total],
+  ].filter(([,, t]) => t > 0);
+  document.getElementById('heroSplitLegend').innerHTML = rows
+    .map(([cls, name, t]) =>
+      `<div class="split-row"><span class="sw ${cls}"></span><span class="nm">${name}</span>` +
+      `<span class="vl">${fmtCN(t)}</span><span class="pc">${pct(t, total)}%</span></div>`
+    ).join('');
 }
 
 // ---- 支撑数据卡（今日/本周/本月）----

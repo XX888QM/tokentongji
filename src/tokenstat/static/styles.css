@@ -234,11 +234,15 @@ body::before {
 .splitbar > span { display: block; height: 100%; transition: width .8s cubic-bezier(.2,.7,.2,1); }
 .splitbar .seg-claude { background: linear-gradient(90deg, #e8794f, #ff9b6e); }
 .splitbar .seg-codex { background: linear-gradient(90deg, #46b596, #6fd9ba); }
+.splitbar .seg-opencode { background: linear-gradient(90deg, #7c8cf8, #a5affa); }
+.splitbar .seg-openclaw { background: linear-gradient(90deg, #d67cf2, #e8a0f8); }
 .split-legend { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
 .split-row { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
 .split-row .sw { width: 9px; height: 9px; border-radius: 2px; flex: none; transform: translateY(1px); }
 .split-row .sw.claude { background: var(--claude); }
 .split-row .sw.codex { background: var(--codex); }
+.split-row .sw.opencode { background: var(--opencode); }
+.split-row .sw.openclaw { background: #d67cf2; }
 .split-row .nm { color: var(--muted); width: 52px; }
 .split-row .vl { color: var(--text); font-weight: 500; }
 .split-row .pc { color: var(--faint); margin-left: auto; }
