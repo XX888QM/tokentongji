@@ -44,6 +44,14 @@ def openclaw_files() -> Iterator[Path]:
         yield from root.glob("*.trajectory.jsonl")
 
 
+def openclaw_v3_files() -> Iterator[Path]:
+    root = config.OPENCLAW_SESSION_DIR
+    if root.is_dir():
+        for p in root.glob("*.jsonl"):
+            if "trajectory" not in p.name:
+                yield p
+
+
 def _should_read(state: dict | None, inode: int, size: int, mtime: float):
     """返回 (start_offset, reset_ctx)。决定续读还是从头读。"""
     if state is None:
@@ -154,6 +162,59 @@ def _ingest_opencode(conn) -> int:
     return added
 
 
+def _ingest_openclaw_v3_file(conn, path: Path) -> int:
+    """增量解析 openclaw v3 session 文件，ctx 跨批次持久化。"""
+    try:
+        st = path.stat()
+    except OSError:
+        return 0
+    source_file = str(path)
+    state = db.get_ingest_state(conn, source_file)
+    start_offset, reset_ctx = _should_read(state, st.st_ino, st.st_size, st.st_mtime)
+
+    if state is not None and start_offset == state["offset"] and st.st_size == state["offset"]:
+        return 0
+
+    ctx = {} if reset_ctx else ((state["ctx"] or {}) if state else {})
+
+    recs = []
+    consumed = start_offset
+    pos = start_offset
+
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(start_offset)
+            for raw in fh:
+                line_start = pos
+                pos += len(raw)
+                if not raw.endswith(b"\n"):
+                    break
+                consumed = pos
+                if len(raw) > MAX_LINE_BYTES:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                rec = openclaw_parser.parse_v3_record(obj, source_file, line_start, ctx)
+                if rec is not None:
+                    recs.append(rec)
+    except OSError:
+        return 0
+
+    added = 0
+    if recs:
+        added += db.insert_records(conn, recs, on_conflict="ignore")
+
+    db.set_ingest_state(
+        conn, source_file,
+        inode=st.st_ino, offset=consumed,
+        size=st.st_size, mtime=st.st_mtime,
+        ctx=ctx,
+    )
+    return added
+
+
 def run_once() -> dict:
     """扫描全部数据源，增量入库一次。返回统计 dict。"""
     config.ensure_data_dir()
@@ -172,6 +233,9 @@ def run_once() -> dict:
         records_added += _ingest_opencode(conn)
         for path in openclaw_files():
             records_added += _ingest_file(conn, path, SOURCE_OPENCLAW, "")
+            files_scanned += 1
+        for path in openclaw_v3_files():
+            records_added += _ingest_openclaw_v3_file(conn, path)
             files_scanned += 1
     finally:
         conn.close()

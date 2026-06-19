@@ -1,12 +1,13 @@
-"""openclaw trajectory 日志解析器（~/.openclaw/agents/main/sessions/*.trajectory.jsonl）。
+"""openclaw 日志解析器，支持两种格式：
 
-只处理 type=="model.completed" 的行，提取：
-  data.usage.{input, output, cacheRead}
-  data.promptCache.lastCallUsage.cacheWrite（可选）
-  顶层: modelId, provider, ts, sessionId, sessionKey, seq
+trajectory（*.trajectory.jsonl）：
+  type=="model.completed"，提取 data.usage / promptCache / sessionKey
+  dedup_key = "openclaw:{runId}:{seq}"
 
-project 从 sessionKey 提取：格式 "agent:main:{type}:..." → 取第三段。
-dedup_key = "openclaw:{sessionId}:{seq}"
+v3 session（*.jsonl，无 "trajectory"）：
+  第一行 type=="session" 作上下文（session_id、cwd）
+  type=="message" + role=="assistant" 提取 message.usage
+  dedup_key = "openclaw-v3:{msg_id}"
 """
 
 from __future__ import annotations
@@ -83,6 +84,71 @@ def parse_record(obj: dict, source_file: str, pos: int) -> Optional[UsageRecord]
         output_tokens=output_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_creation_tokens=cache_creation_tokens,
+        reasoning_tokens=0,
+        total_tokens=total_tokens,
+        session_id=session_id,
+        source_file=source_file,
+        pos=pos,
+        category=CATEGORY_MAIN,
+        dedup_key=dedup_key,
+    )
+
+
+def parse_v3_record(obj: dict, source_file: str, pos: int, ctx: dict) -> Optional[UsageRecord]:
+    """解析 openclaw v3 session 格式（*.jsonl，无 'trajectory'）。
+
+    ctx 跨行持久化 session_id / cwd，由调用方在每个增量批次间传入。
+    """
+    if not isinstance(obj, dict):
+        return None
+
+    obj_type = obj.get("type")
+
+    if obj_type == "session":
+        ctx["session_id"] = obj.get("id") or ""
+        ctx["cwd"] = obj.get("cwd") or "openclaw"
+        return None
+
+    if obj_type != "message":
+        return None
+
+    msg = obj.get("message")
+    if not isinstance(msg, dict) or msg.get("role") != "assistant":
+        return None
+
+    usage = msg.get("usage")
+    if not isinstance(usage, dict):
+        return None
+
+    total_tokens = int(usage.get("totalTokens") or 0)
+    if total_tokens == 0:
+        return None
+
+    # message.timestamp 是 epoch ms；外层 timestamp 是 ISO 字符串
+    ts_ms = msg.get("timestamp")
+    if ts_ms:
+        ts = int(ts_ms) // 1000
+    else:
+        ts = parse_iso_utc(obj.get("timestamp") or "")
+    if ts == 0:
+        return None
+
+    msg_id = obj.get("id") or str(pos)
+    dedup_key = f"openclaw-v3:{msg_id}"
+
+    model = (msg.get("model") or "unknown").strip()
+    session_id = ctx.get("session_id") or ""
+    project = ctx.get("cwd") or "openclaw"
+
+    return UsageRecord(
+        ts=ts,
+        source=SOURCE_OPENCLAW,
+        model=model,
+        project=project,
+        input_tokens=int(usage.get("input") or 0),
+        output_tokens=int(usage.get("output") or 0),
+        cache_read_tokens=int(usage.get("cacheRead") or 0),
+        cache_creation_tokens=int(usage.get("cacheWrite") or 0),
         reasoning_tokens=0,
         total_tokens=total_tokens,
         session_id=session_id,

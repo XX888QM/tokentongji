@@ -163,5 +163,89 @@ class TestCodexIngest(unittest.TestCase):
         self.assertEqual(row["model"], "gpt-5.5")
 
 
+class TestOpenclaWV3Ingest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.get_conn(":memory:")
+        db.init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _rows(self):
+        cur = self.conn.execute(
+            "SELECT COUNT(*) c, COALESCE(SUM(total_tokens),0) t, "
+            "MAX(session_id) sid, MAX(project) proj FROM usage_events"
+        )
+        return cur.fetchone()
+
+    def _v3_session(self, session_id="sess-abc", cwd="/home/proj"):
+        return {"type": "session", "version": 3, "id": session_id,
+                "timestamp": "2026-05-01T10:00:00.000Z", "cwd": cwd}
+
+    def _v3_msg(self, msg_id, inp, out, total, model="gpt-5.4", ts_ms=1777000000000):
+        return {
+            "type": "message",
+            "id": msg_id,
+            "parentId": None,
+            "timestamp": "2026-05-01T10:00:01.000Z",
+            "message": {
+                "role": "assistant",
+                "model": model,
+                "usage": {"input": inp, "output": out, "cacheRead": 0,
+                          "cacheWrite": 0, "totalTokens": total},
+                "timestamp": ts_ms,
+            },
+        }
+
+    def test_v3_basic_ingestion(self):
+        f = Path(self.tmp.name) / "mysess.jsonl"
+        _w(f, [
+            self._v3_session("sid-1", "/tmp/myproject"),
+            self._v3_msg("m1", 100, 50, 150),
+            self._v3_msg("m2", 200, 80, 280),
+        ])
+        ingest._ingest_openclaw_v3_file(self.conn, f)
+        r = self._rows()
+        self.assertEqual(r["c"], 2)
+        self.assertEqual(r["t"], 430)
+        self.assertEqual(r["sid"], "sid-1")
+        self.assertEqual(r["proj"], "/tmp/myproject")
+
+    def test_v3_zero_token_messages_skipped(self):
+        f = Path(self.tmp.name) / "zero.jsonl"
+        _w(f, [
+            self._v3_session(),
+            self._v3_msg("z1", 0, 0, 0),
+            self._v3_msg("z2", 10, 5, 15),
+        ])
+        ingest._ingest_openclaw_v3_file(self.conn, f)
+        r = self._rows()
+        self.assertEqual(r["c"], 1)   # z1 跳过，只有 z2
+
+    def test_v3_incremental_no_recount(self):
+        f = Path(self.tmp.name) / "inc.jsonl"
+        _w(f, [self._v3_session(), self._v3_msg("a1", 10, 5, 15)])
+        ingest._ingest_openclaw_v3_file(self.conn, f)
+        self.assertEqual(self._rows()["c"], 1)
+        # 追加新消息，断点续读
+        _w(f, [self._v3_msg("a2", 20, 10, 30)])
+        ingest._ingest_openclaw_v3_file(self.conn, f)
+        r = self._rows()
+        self.assertEqual(r["c"], 2)
+        self.assertEqual(r["t"], 45)
+
+    def test_v3_dedup_same_msg_id(self):
+        f = Path(self.tmp.name) / "dup.jsonl"
+        _w(f, [
+            self._v3_session(),
+            self._v3_msg("dup1", 10, 5, 15),
+            self._v3_msg("dup1", 10, 5, 15),  # 同 id
+        ])
+        ingest._ingest_openclaw_v3_file(self.conn, f)
+        self.assertEqual(self._rows()["c"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
