@@ -203,6 +203,10 @@ th {
 }
 td { padding:8px 10px; border-bottom:1px solid var(--border); color:var(--text); }
 th.num, td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+/* 限制项目/模型名列宽，避免长名撑爆表格把费用列挤出可视区 */
+#modelTable td:first-child, #projectTable td:first-child {
+  max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
 tbody tr { transition:background .12s; }
 tbody tr:hover { background:var(--surface2); }
 tfoot tr.tfoot-total td { border-top:1px solid var(--border); border-bottom:none; font-weight:600; color:var(--text); background:var(--surface2); }
