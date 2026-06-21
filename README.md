@@ -1,7 +1,7 @@
 # Token 统计仪表盘
 
-统计本机 **Claude Code** 与 **Codex** 的 token 用量，按天 / 周 / 月汇总，
-本地 Web 仪表盘实时展示。纯本地日志解析，**不调用任何外部 API、零第三方依赖**。
+统计本机 **Claude Code**、**Codex**、**OpenCode**、**OpenClaw** 四类工具的 token 用量，
+按天 / 周 / 月 / 年汇总，本地 Web 仪表盘实时展示。纯本地日志解析，**不调用任何外部 API（汇率除外）、零第三方依赖**。
 
 ## 数据来源
 
@@ -9,18 +9,20 @@
 |------|------|---------|
 | Claude | `~/.claude/projects/**/*.jsonl` | assistant 的 `message.usage`，按 `message.id` 去重（防 2.6~3x 高估） |
 | Codex | `~/.codex/sessions` + `archived_sessions` | `token_count` 的累积 `total_token_usage` 做相邻差分（防 2x 高估） |
+| OpenCode | `~/.local/share/opencode/opencode.db` | 直读 SQLite，按消息时间戳增量同步；reasoning token 计入 output |
+| OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | 兼容 `*.trajectory.jsonl`（`model.completed`）与 v3 session（assistant message usage）两种格式 |
 
-两边数据已用独立脚本交叉对账，**0.000% 误差**。
+Claude 与 Codex 两边数据已用独立脚本交叉对账，**0.000% 误差**。
 
 ## 快速开始
 
 需要 Python 3.9+（标准库即可，**无需 pip install**）。
 
 ```bash
-git clone https://github.com/<your-account>/tokentongji.git
+git clone https://github.com/XX888QM/tokentongji.git
 cd tokentongji
 
-# 1) 先全量入库一次（首次约 9 秒）
+# 1) 先全量入库一次（首次约 1 秒）
 PYTHONPATH=src python3 -m tokenstat.ingest
 
 # 2) 启动服务（含后台每 60s 增量 ingest + Web）
@@ -32,11 +34,16 @@ open http://127.0.0.1:8787
 
 ## 仪表盘内容
 
-- 顶部卡片：今日 / 本周 / 本月 / 今年 总 token + 估算费用，Claude/Codex 分列
-- 数字按 万 / 百万 / 千万 / 亿 显示，悬停看精确值
-- 折线图：近 30 天每日 token 趋势（Claude vs Codex）
-- 拆分表：按 model、按项目（cwd）的 token + 费用排行，cache token 单列，可切今日/本周/本月/今年
+- 顶部卡片：今日 / 本周 / 本月 / 今年 总 token + 估算费用（人民币，实时 USD→CNY 汇率），四来源占比分列
+- 数字按万进制单位显示（万 / 亿 / 万亿 / 京 / 垓），悬停看精确值
+- 折线图：近 30 天每日 token 趋势，四来源分线
+- 拆分表：按 model、按项目（cwd）的 token + 费用排行，带合计行，cache token 单列，可切今日 / 本周 / 本月 / 今年
+- 运行审计：数据源路径状态、入库进度、口径风险（未知模型、跨来源会话等）
+- 异常洞察：当日最大贡献模型 / 项目，环比基线对比
+- TOP 10 最贵会话，点击展开按模型 / 文件明细
 - 每 30s 自动刷新
+
+费用以人民币展示，汇率经 `open.er-api.com` 实时获取（1 小时缓存，失败回退 7.25）。
 
 ## 开机自启（launchd）
 
@@ -54,12 +61,13 @@ bash scripts/uninstall-launchd.sh
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
+| `TOKENSTAT_HOST` | 127.0.0.1 | 监听地址 |
 | `TOKENSTAT_PORT` | 8787 | Web 端口 |
 | `TOKENSTAT_INGEST_INTERVAL` | 60 | 后台 ingest 间隔（秒） |
 | `TOKENSTAT_REFRESH` | 30 | 页面自动刷新（秒） |
 | `TOKENSTAT_DATA_DIR` | `./data` | SQLite 与日志目录 |
 
-费用单价见 `src/tokenstat/pricing.json`，可自行调整（美元/百万 token）。
+费用单价见 `src/tokenstat/pricing.json`，可自行调整（美元/百万 token）。本地/自托管模型放 `local` 分区按零费率处理。
 **注意：订阅制（Claude Max / Codex 套餐）下 token 不直接对应扣费，费用仅供参考。**
 
 ## 测试
@@ -72,16 +80,18 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 ```
 src/tokenstat/
-  config.py      全局配置
+  config.py      全局配置（数据源路径、端口、间隔）
   models.py      UsageRecord 归一化数据模型
   db.py          SQLite（dedup_key 唯一去重 + 增量断点）
   parsers/
     claude.py    Claude 解析（msg.id 去重）
     codex.py     Codex 解析（total 差分 + carry-forward）
+    opencode.py  OpenCode 解析（SQLite 直读，增量同步）
+    openclaw.py  OpenClaw 解析（trajectory + v3 双格式）
   ingest.py      增量入库（字节 offset 断点续读）
   pricing.py     费用估算 + model 归一化
-  pricing.json   单价表
-  aggregate.py   按天/周/月聚合查询
-  server.py      http.server（API + 静态 + 后台 ingest 线程）
+  pricing.json   单价表（anthropic / openai / deepseek / local）
+  aggregate.py   按天/周/月/年聚合查询
+  server.py      http.server（API + 静态 + 汇率 + 后台 ingest 线程）
   static/        index.html / app.js / styles.css / chart.min.js
 ```
