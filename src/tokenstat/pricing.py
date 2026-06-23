@@ -80,8 +80,10 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
         return pick("claude-sonnet-4-6", "claude-sonnet-4-5")
     if clean.startswith("claude-haiku"):
         return pick("claude-haiku-4-5")
-    if clean.startswith("gpt-5-codex") or clean == "gpt-5":
-        return pick("gpt-5", "gpt-5-codex")
+    if clean.startswith("gpt-5-codex") or clean == "codex-auto-review":
+        return pick("gpt-5.3-codex", "gpt-5-codex")
+    if clean == "gpt-5":
+        return pick("gpt-5")
     if clean.startswith("gpt-5"):
         # gpt-5.x 未精确命中时退到最接近的基础款
         return pick("gpt-5", "gpt-5.4")

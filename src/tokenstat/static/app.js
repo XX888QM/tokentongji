@@ -189,7 +189,7 @@ function renderHero(p, day) {
     ).join('');
 }
 
-// ---- 支撑数据卡（今日/本周/本月）----
+// ---- 支撑数据卡（昨天/近7天/本月）----
 function statCard(label, p) {
   const split = sourceRows(p.by_source || {}, p.total || 0)
     .map((row) => `<span style="color:${row.color}">${esc(row.label)} ${fmtCN(row.total)}</span>`)
@@ -209,7 +209,7 @@ async function loadSummary() {
   renderHero(s.periods.today, day);
   document.getElementById('stats').innerHTML =
     statCard('昨天', s.periods.yesterday) +
-    statCard('本周', s.periods.week) +
+    statCard('近7天', s.periods.week) +
     statCard('本月', s.periods.month) +
     statCard('今年', s.periods.year);
   document.getElementById('meta').textContent =

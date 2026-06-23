@@ -20,9 +20,9 @@ class TestPeriodRange(unittest.TestCase):
         t = date(2026, 6, 6)
         self.assertEqual(aggregate.period_range("yesterday", t), ("2026-06-05", "2026-06-05"))
 
-    def test_week_monday_to_today(self):
-        t = date(2026, 6, 6)  # 周六, 本周一=2026-06-01
-        self.assertEqual(aggregate.period_range("week", t), ("2026-06-01", "2026-06-06"))
+    def test_week_is_last_7_days_including_today(self):
+        t = date(2026, 6, 6)
+        self.assertEqual(aggregate.period_range("week", t), ("2026-05-31", "2026-06-06"))
 
     def test_month(self):
         t = date(2026, 6, 6)

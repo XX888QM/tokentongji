@@ -3,8 +3,10 @@
     "currency": "USD_per_1M_tokens",
     "source_anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
     "source_openai": "https://developers.openai.com/api/docs/pricing",
+    "source_deepseek": "https://api-docs.deepseek.com/quick_start/pricing",
     "fetched_date": "2026-06-06",
-    "note": "订阅制(Claude Max / Codex 套餐)下，token 不直接对应扣费。此处费用按公开 API 单价折算，仅供参考。"
+    "verified_date": "2026-06-23",
+    "note": "订阅制(Claude Max / Codex 套餐)下，token 不直接对应扣费。此处费用按公开 API 单价折算，仅供参考。codex-auto-review 与 gpt-5-codex 按 OpenAI Codex 专项 gpt-5.3-codex 价格估算。"
   },
   "default": { "input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write_5m": 6.25, "cache_write_1h": 10.0 },
   "anthropic": {
@@ -36,7 +38,7 @@
     "gpt-5.4-nano":      { "input": 0.20, "output": 1.25,  "cache_read": 0.02,  "cache_write_5m": null, "cache_write_1h": null },
     "gpt-5.3-codex":     { "input": 1.75, "output": 14.0,  "cache_read": 0.175, "cache_write_5m": null, "cache_write_1h": null },
     "gpt-5":             { "input": 1.25, "output": 10.0,  "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null },
-    "gpt-5-codex":       { "input": 1.25, "output": 10.0,  "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null },
-    "codex-auto-review": { "input": 1.25, "output": 10.0,  "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null }
+    "gpt-5-codex":       { "input": 1.75, "output": 14.0,  "cache_read": 0.175, "cache_write_5m": null, "cache_write_1h": null },
+    "codex-auto-review": { "input": 1.75, "output": 14.0,  "cache_read": 0.175, "cache_write_5m": null, "cache_write_1h": null }
   }
 }

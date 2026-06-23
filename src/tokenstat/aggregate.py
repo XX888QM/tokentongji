@@ -31,8 +31,8 @@ def period_range(period: str, today: Optional[date] = None) -> tuple[str, str]:
         y = t - timedelta(days=1)
         return y.isoformat(), y.isoformat()
     if period == "week":
-        monday = t - timedelta(days=t.weekday())
-        return monday.isoformat(), t.isoformat()
+        start = t - timedelta(days=6)
+        return start.isoformat(), t.isoformat()
     if period == "month":
         first = t.replace(day=1)
         return first.isoformat(), t.isoformat()

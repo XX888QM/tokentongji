@@ -34,10 +34,10 @@ open http://127.0.0.1:8787
 
 ## 仪表盘内容
 
-- 顶部卡片：今日 / 本周 / 本月 / 今年 总 token + 估算费用（人民币，实时 USD→CNY 汇率），四来源占比分列
+- 顶部卡片：今日 / 近 7 天 / 本月 / 今年 总 token + 估算费用（人民币，实时 USD→CNY 汇率），四来源占比分列
 - 数字按万进制单位显示（万 / 亿 / 万亿 / 京 / 垓），悬停看精确值
 - 折线图：近 30 天每日 token 趋势，四来源分线
-- 拆分表：按 model、按项目（cwd）的 token + 费用排行，带合计行，cache token 单列，可切今日 / 本周 / 本月 / 今年
+- 拆分表：按 model、按项目（cwd）的 token + 费用排行，带合计行，cache token 单列，可切今日 / 近 7 天 / 本月 / 今年
 - 运行审计：数据源路径状态、入库进度、口径风险（未知模型、跨来源会话等）
 - 异常洞察：当日最大贡献模型 / 项目，环比基线对比
 - TOP 10 最贵会话，点击展开按模型 / 文件明细
@@ -67,7 +67,7 @@ bash scripts/uninstall-launchd.sh
 | `TOKENSTAT_REFRESH` | 30 | 页面自动刷新（秒） |
 | `TOKENSTAT_DATA_DIR` | `./data` | SQLite 与日志目录 |
 
-费用单价见 `src/tokenstat/pricing.json`，可自行调整（美元/百万 token）。本地/自托管模型放 `local` 分区按零费率处理。
+费用单价见 `src/tokenstat/pricing.json`，可自行调整（美元/百万 token）。本地/自托管模型放 `local` 分区按零费率处理。`codex-auto-review` 和 `gpt-5-codex` 按 OpenAI Codex 专项 `gpt-5.3-codex` 公开价格估算。
 **注意：订阅制（Claude Max / Codex 套餐）下 token 不直接对应扣费，费用仅供参考。**
 
 ## 测试

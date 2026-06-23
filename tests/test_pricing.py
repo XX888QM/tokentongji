@@ -26,10 +26,12 @@ class TestNormalization(unittest.TestCase):
         r = pricing.rates_for_model("us.anthropic.claude-opus-4-8[1m]", self.p)
         self.assertEqual(r["input"], 5.0)
 
-    def test_gpt5_codex_uses_base(self):
-        r = pricing.rates_for_model("gpt-5-codex", self.p)
-        self.assertEqual(r["input"], 1.25)
-        self.assertEqual(r["output"], 10.0)
+    def test_gpt5_codex_uses_codex_specialized_pricing(self):
+        for model in ("gpt-5-codex", "codex-auto-review"):
+            r = pricing.rates_for_model(model, self.p)
+            self.assertEqual(r["input"], 1.75, model)
+            self.assertEqual(r["cache_read"], 0.175, model)
+            self.assertEqual(r["output"], 14.0, model)
 
     def test_gpt5_versioned(self):
         self.assertEqual(pricing.rates_for_model("gpt-5.4", self.p)["input"], 2.5)
