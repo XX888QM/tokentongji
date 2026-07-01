@@ -22,6 +22,17 @@ class TestNormalization(unittest.TestCase):
         self.assertEqual(pricing.rates_for_model("claude-sonnet-4-6", self.p)["input"], 3.0)
         self.assertEqual(pricing.rates_for_model("claude-haiku-4-5", self.p)["input"], 1.0)
 
+    def test_sonnet_5(self):
+        r = pricing.rates_for_model("claude-sonnet-5", self.p)
+        self.assertEqual(r["input"], 3.0)
+        self.assertEqual(r["output"], 15.0)
+
+    def test_unmatched_sonnet_family_falls_back_to_sonnet_5_not_4_6(self):
+        # 未来未收录的 sonnet 变体（不含 claude-sonnet-5 前缀）应通过家族兜底
+        # 归到最新的 sonnet-5，而非旧的 sonnet-4-6
+        r = pricing.rates_for_model("claude-sonnet-6", self.p)
+        self.assertEqual(r["input"], 3.0)
+
     def test_region_prefix_and_suffix_stripped(self):
         r = pricing.rates_for_model("us.anthropic.claude-opus-4-8[1m]", self.p)
         self.assertEqual(r["input"], 5.0)

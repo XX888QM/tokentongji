@@ -5,8 +5,8 @@
     "source_openai": "https://developers.openai.com/api/docs/pricing",
     "source_deepseek": "https://api-docs.deepseek.com/quick_start/pricing",
     "fetched_date": "2026-06-06",
-    "verified_date": "2026-06-23",
-    "note": "订阅制(Claude Max / Codex 套餐)下，token 不直接对应扣费。此处费用按公开 API 单价折算，仅供参考。codex-auto-review 与 gpt-5-codex 按 OpenAI Codex 专项 gpt-5.3-codex 价格估算。"
+    "verified_date": "2026-07-01",
+    "note": "订阅制(Claude Max / Codex 套餐)下，token 不直接对应扣费。此处费用按公开 API 单价折算，仅供参考。codex-auto-review 与 gpt-5-codex 按 OpenAI Codex 专项 gpt-5.3-codex 价格估算。claude-sonnet-5 按标准价 $3/$15 登记，2026-08-31 前有 $2/$10 introductory 优惠未计入。"
   },
   "default": { "input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write_5m": 6.25, "cache_write_1h": 10.0 },
   "anthropic": {
@@ -17,6 +17,7 @@
     "claude-opus-4-5":   { "input": 5.0,  "output": 25.0, "cache_read": 0.50, "cache_write_5m": 6.25,  "cache_write_1h": 10.0 },
     "claude-opus-4-1":   { "input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write_5m": 18.75, "cache_write_1h": 30.0 },
     "claude-opus-4-0":   { "input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write_5m": 18.75, "cache_write_1h": 30.0 },
+    "claude-sonnet-5":   { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
     "claude-sonnet-4-6": { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
     "claude-sonnet-4-5": { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
     "claude-sonnet-4-0": { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
