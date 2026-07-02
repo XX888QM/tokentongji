@@ -4,8 +4,10 @@ opencode 将消息直接存到 SQLite message 表，每条 assistant 消息含�
   tokens.{input, output, reasoning, cache.read, cache.write}
   path.cwd / modelID / providerID / session_id / time_created(ms)
 
-增量策略：记录上次同步到的最大 time_created（毫秒），
-下次只取 > last_ts_ms 的新行，无需文件 offset 机制。
+增量策略：记录上次同步到的最大 time_created（毫秒），下次取 >= last_ts_ms 的行。
+用 >= 而非 > 是为了不漏掉与游标同毫秒、但写入晚于上轮扫描的消息；
+边界行会被重复读到，但 dedup_key(opencode:{id}) 保证 on_conflict='ignore' 挡掉重复，
+不会重复计数。无需文件 offset 机制。
 """
 
 from __future__ import annotations
@@ -51,7 +53,7 @@ def fetch_records(
             FROM message
             WHERE json_extract(data, '$.role') = 'assistant'
               AND json_extract(data, '$.tokens') IS NOT NULL
-              AND time_created > ?
+              AND time_created >= ?
             ORDER BY time_created ASC
             """,
             (since_ts_ms,),

@@ -171,5 +171,8 @@ def process_record(
         source_file=source_file,
         pos=pos,
         category=CATEGORY_MAIN,
-        dedup_key=f"{source_file}#{pos}",
+        # 用文件名(自带全局唯一 UUID+时间戳)而非完整路径做去重键：
+        # Codex 把 session 从 sessions/ 挪进 archived_sessions/ 后，同一份内容
+        # 在两个路径各解析一遍，若键含完整路径就挡不住 → 系统性重复计数。
+        dedup_key=f"{Path(source_file).name}#{pos}",
     )

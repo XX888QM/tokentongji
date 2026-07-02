@@ -14,6 +14,7 @@ import sqlite3
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+from . import config
 from . import pricing as pricing_mod
 from .models import SOURCE_OPENCODE, VALID_SOURCES, _LOCAL_TZ, project_display
 
@@ -341,6 +342,8 @@ def audit(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
         """
     ).fetchone()
 
+    # 只看近 90 天，避免随库无限增长的全表扫描（mixed_sessions 无自然时间边界）
+    mixed_cutoff = (_today_local() - timedelta(days=90)).isoformat()
     mixed_rows = conn.execute(
         f"""
         SELECT session_id,
@@ -350,12 +353,13 @@ def audit(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
                COUNT(*) AS records,
                SUM({_total_sql()}) AS total
         FROM usage_events
-        WHERE session_id != ''
+        WHERE session_id != '' AND date_local >= ?
         GROUP BY session_id
         HAVING sources > 1 OR models > 1 OR projects > 1
         ORDER BY total DESC
         LIMIT 10
-        """
+        """,
+        (mixed_cutoff,),
     ).fetchall()
     mixed_sessions = [
         {
@@ -388,6 +392,20 @@ def audit(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
     for expected in ("claude", "codex"):
         if expected not in present_sources:
             issues.append({"level": "warn", "message": f"暂无 {expected} 数据"})
+
+    # 源陈旧检测：以库内最新日期为基准（而非 today，避免全员关机数天集体误报），
+    # 某个有数据的源落后 >= STALE_SOURCE_DAYS 天则告警——捕捉「某来源静默停更」。
+    dated = [s for s in sources if s["records"] and s["last_date"]]
+    if dated:
+        newest = max(s["last_date"] for s in dated)
+        newest_d = date.fromisoformat(newest)
+        for s in dated:
+            lag = (newest_d - date.fromisoformat(s["last_date"])).days
+            if lag >= config.STALE_SOURCE_DAYS:
+                issues.append({
+                    "level": "warn",
+                    "message": f"{s['source']} 已 {lag} 天无新数据（最后 {s['last_date']}）",
+                })
     if not state["files"]:
         issues.append({"level": "warn", "message": "暂无 ingest_state，可能还没完成首次入库"})
     if mixed_sessions:
@@ -485,18 +503,6 @@ def session_detail(
             "records": int(r["records"] or 0),
         })
 
-    date_rows = conn.execute(
-        f"""
-        SELECT date_local AS date,
-               SUM({_total_sql()}) AS total,
-               COUNT(*) AS records
-        FROM usage_events
-        WHERE {base_where}
-        GROUP BY date_local
-        ORDER BY date_local
-        """,
-        params,
-    ).fetchall()
     file_rows = conn.execute(
         f"""
         SELECT source_file,
@@ -522,10 +528,6 @@ def session_detail(
             "last_date": last_date,
         },
         "groups": groups,
-        "by_date": [
-            {"date": row["date"], "total": int(row["total"] or 0), "records": int(row["records"] or 0)}
-            for row in date_rows
-        ],
         "source_files": [
             {
                 "source_file": row["source_file"],
@@ -638,6 +640,31 @@ def insights(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
             "level": "info",
             "title": "最大模型贡献",
             "body": f"{r['source']} / {r['model']} 贡献 {rt:,} tokens。",
+        })
+
+    # 后台消耗占比：observer(claude-mem)/subagent 混在总量里，用户此前无法区分。
+    cat_rows = conn.execute(
+        f"""
+        SELECT category, SUM({_total_sql()}) AS total
+        FROM usage_events
+        WHERE date_local BETWEEN ? AND ?
+        GROUP BY category
+        """,
+        (start_today, end_today),
+    ).fetchall()
+    cat_totals = {row["category"]: int(row["total"] or 0) for row in cat_rows}
+    cat_sum = sum(cat_totals.values())
+    if cat_sum > 0:
+        bg = cat_totals.get("observer", 0) + cat_totals.get("subagent", 0)
+        bg_pct = round(bg / cat_sum * 100, 1)
+        cards.append({
+            "level": "info",
+            "title": "后台消耗占比",
+            "body": (
+                f"今日 observer+subagent 占 {bg_pct}%"
+                f"（主交互 {round(cat_totals.get('main', 0) / cat_sum * 100, 1)}%）。"
+                if bg else "今日全部为主交互消耗，无后台工具/子代理占用。"
+            ),
         })
 
     cache_row = conn.execute(

@@ -152,6 +152,26 @@ class TestCodexIngest(unittest.TestCase):
         self.assertEqual(cr, 300)  # 200 + 100
         self.assertEqual(i, 500)   # 400 + 100
 
+    def test_codex_archived_copy_not_double_counted(self):
+        # 同一份 session 内容存在于 sessions/ 和 archived_sessions/ 两个路径，
+        # 各自从头解析一遍，dedup_key 基于文件名 → 第二份被 DB 去重挡掉，不重复计数
+        active = Path(self.tmp.name) / "sessions"
+        archived = Path(self.tmp.name) / "archived_sessions"
+        active.mkdir()
+        archived.mkdir()
+        content = [
+            {"type": "session_meta", "payload": {"id": "u1", "cwd": "/real"}},
+            {"type": "turn_context", "payload": {"model": "gpt-5.4", "cwd": "/real"}},
+            _tc(1000, 600, 200, 400),
+        ]
+        _w(active / "roll-uuid.jsonl", content)
+        _w(archived / "roll-uuid.jsonl", content)
+        ingest._ingest_file(self.conn, active / "roll-uuid.jsonl", "codex", "gpt-5.5")
+        ingest._ingest_file(self.conn, archived / "roll-uuid.jsonl", "codex", "gpt-5.5")
+        c, i, o, cr = self._sum()
+        self.assertEqual(c, 1)     # 只 1 条，不是 2
+        self.assertEqual(o, 400)   # 不是 800
+
     def test_codex_model_fallback(self):
         f = Path(self.tmp.name) / "rollout-y.jsonl"
         _w(f, [

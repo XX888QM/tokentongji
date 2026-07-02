@@ -307,5 +307,94 @@ class TestAuditAndInsights(unittest.TestCase):
         self.assertIn("近 7 日基线", titles)
 
 
+class TestStaleSourceDetection(unittest.TestCase):
+    """audit() 应捕捉「某来源静默停更」——落后库内最新日期 >= STALE_SOURCE_DAYS 天。"""
+
+    def _pricing(self):
+        return {"default": {"input": 1, "output": 1, "cache_read": 1,
+                            "cache_write_5m": 1, "cache_write_1h": 1},
+                "anthropic": {}, "openai": {}}
+
+    def test_stale_source_warns(self):
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-20"), source="claude", model="known",
+                            project="/tmp/a", input_tokens=10, total_tokens=10, dedup_key="fresh"),
+                UsageRecord(ts=_ts("2026-06-20"), source="codex", model="known",
+                            project="/tmp/b", input_tokens=10, total_tokens=10, dedup_key="fresh2"),
+                UsageRecord(ts=_ts("2026-06-06"), source="opencode", model="known",
+                            project="/tmp/c", input_tokens=10, total_tokens=10, dedup_key="stale"),
+            ])
+            a = aggregate.audit(conn, self._pricing())
+        finally:
+            conn.close()
+        msgs = " ".join(i["message"] for i in a["issues"])
+        self.assertIn("opencode 已 14 天无新数据", msgs)
+        self.assertNotIn("claude 已", msgs)  # 最新源不告警
+        self.assertEqual(a["status"], "warn")
+
+    def test_all_fresh_no_stale_warn(self):
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-20"), source="claude", model="known",
+                            project="/tmp/a", input_tokens=10, total_tokens=10, dedup_key="c"),
+                UsageRecord(ts=_ts("2026-06-19"), source="codex", model="known",
+                            project="/tmp/b", input_tokens=10, total_tokens=10, dedup_key="x"),
+            ])
+            a = aggregate.audit(conn, self._pricing())
+        finally:
+            conn.close()
+        msgs = " ".join(i["message"] for i in a["issues"])
+        self.assertNotIn("无新数据", msgs)  # 差 1 天 < 阈值 3
+
+
+class TestCategoryCard(unittest.TestCase):
+    """insights() 应给出「后台消耗占比」卡片，区分 observer/subagent 与主交互。"""
+
+    def _pricing(self):
+        return {"default": {"input": 1, "output": 1, "cache_read": 1,
+                            "cache_write_5m": 1, "cache_write_1h": 1},
+                "anthropic": {}, "openai": {}}
+
+    def test_background_ratio_card(self):
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-06"), source="claude", model="known",
+                            project="/tmp/a", input_tokens=70, total_tokens=70,
+                            category="main", dedup_key="m"),
+                UsageRecord(ts=_ts("2026-06-06"), source="claude", model="known",
+                            project="/tmp/b", input_tokens=30, total_tokens=30,
+                            category="observer", dedup_key="o"),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+                data = aggregate.insights(conn, self._pricing())
+        finally:
+            conn.close()
+        card = next(c for c in data["cards"] if c["title"] == "后台消耗占比")
+        self.assertIn("30.0%", card["body"])  # observer 30 / 总 100
+
+    def test_all_main_card(self):
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-06"), source="claude", model="known",
+                            project="/tmp/a", input_tokens=100, total_tokens=100,
+                            category="main", dedup_key="m"),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+                data = aggregate.insights(conn, self._pricing())
+        finally:
+            conn.close()
+        card = next(c for c in data["cards"] if c["title"] == "后台消耗占比")
+        self.assertIn("全部为主交互", card["body"])
+
+
 if __name__ == "__main__":
     unittest.main()

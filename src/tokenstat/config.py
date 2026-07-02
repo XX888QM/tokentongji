@@ -39,6 +39,9 @@ PORT = _env_int("TOKENSTAT_PORT", 8787)
 # ---- 后台 ingest ----
 INGEST_INTERVAL_SEC = _env_int("TOKENSTAT_INGEST_INTERVAL", 60)
 
+# ---- 数据质量：某来源落后最新数据源多少天算「陈旧/停更」 ----
+STALE_SOURCE_DAYS = _env_int("TOKENSTAT_STALE_DAYS", 3)
+
 # ---- 前端自动刷新（秒）----
 DASHBOARD_REFRESH_SEC = _env_int("TOKENSTAT_REFRESH", 30)
 

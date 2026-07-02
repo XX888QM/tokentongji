@@ -1,5 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
-
+/* 字体走系统栈（-apple-system / PingFang SC），不外链 Google Fonts：
+   遵守「零外部依赖」，且避免国内直连被墙时 @import 阻塞渲染。 */
 :root {
   --bg: #08090a;
   --surface: #0e1012;

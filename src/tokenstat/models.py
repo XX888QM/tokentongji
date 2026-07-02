@@ -30,6 +30,9 @@ CATEGORY_SUBAGENT = "subagent"
 CATEGORY_OBSERVER = "observer"
 VALID_CATEGORIES = (CATEGORY_MAIN, CATEGORY_SUBAGENT, CATEGORY_OBSERVER)
 
+# 字符串字段上限（model/project/session_id），防损坏日志塞超长值
+_MAX_STR = 512
+
 
 @dataclass(frozen=True)
 class UsageRecord:
@@ -80,6 +83,13 @@ class UsageRecord:
             value = getattr(self, name)
             if not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} 必须为非负整数，收到 {value!r}")
+
+        # 损坏/伪造日志可能塞入超长字符串，截断防止撑大 SQLite / 拖慢聚合。
+        # frozen dataclass 用 object.__setattr__ 就地改写。
+        for name in ("model", "project", "session_id"):
+            value = getattr(self, name)
+            if isinstance(value, str) and len(value) > _MAX_STR:
+                object.__setattr__(self, name, value[:_MAX_STR])
 
     @property
     def date_local(self) -> str:

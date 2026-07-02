@@ -26,6 +26,14 @@ class TestUsageRecord(unittest.TestCase):
         with self.assertRaises(ValueError):
             UsageRecord(ts=1, source="claude", model="m", project="/x", input_tokens=-5)
 
+    def test_overlong_strings_truncated(self):
+        # 损坏/伪造日志塞超长字符串时应被截断，防撑大 SQLite
+        r = UsageRecord(ts=1, source="claude", model="m" * 5000,
+                        project="/p" * 5000, session_id="s" * 5000)
+        self.assertEqual(len(r.model), 512)
+        self.assertEqual(len(r.project), 512)
+        self.assertEqual(len(r.session_id), 512)
+
     def test_date_local_is_shanghai(self):
         # 2026-01-01 00:30 UTC -> 北京时间 08:30 同日
         ts = parse_iso_utc("2026-01-01T00:30:00Z")

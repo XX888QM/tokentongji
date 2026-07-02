@@ -52,7 +52,17 @@ class TestCodexParser(unittest.TestCase):
         self.assertEqual(rec.input_tokens, 400)           # fresh = 600 - 200
         self.assertEqual(rec.output_tokens, 400)
         self.assertEqual(rec.total_tokens, 400 + 200 + 400)
-        self.assertEqual(rec.dedup_key, "/f#2")
+        self.assertEqual(rec.dedup_key, "f#2")  # 基于文件名(basename)，非完整路径
+
+    def test_dedup_key_path_independent(self):
+        # 同一文件被归档到另一目录后，dedup_key 必须相同，否则会重复计数
+        s1 = CodexState.from_ctx({}, default_model="gpt-5.5")
+        s2 = CodexState.from_ctx({}, default_model="gpt-5.5")
+        codex.process_record(_turn_context("gpt-5.4", "/c"), "/sessions/roll.jsonl", 0, s1)
+        r1 = codex.process_record(_token_count(1000, 600, 200, 400), "/sessions/roll.jsonl", 88, s1)
+        codex.process_record(_turn_context("gpt-5.4", "/c"), "/archived_sessions/roll.jsonl", 0, s2)
+        r2 = codex.process_record(_token_count(1000, 600, 200, 400), "/archived_sessions/roll.jsonl", 88, s2)
+        self.assertEqual(r1.dedup_key, r2.dedup_key)  # 同名文件不同路径 → 同键 → DB 层去重
 
     def test_cumulative_delta(self):
         codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 0, self.state)

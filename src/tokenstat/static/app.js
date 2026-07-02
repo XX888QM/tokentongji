@@ -11,12 +11,18 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // GET /api/breakdown?period=...    -> { period, by_model:[...], by_project:[...] }
 // GET /api/audit                   -> { status, meta, sources, ingest_state, issues, ... }
 // GET /api/insights                -> { metrics, cards }
-// GET /api/session_detail?...      -> { summary, groups, by_date, source_files }
+// GET /api/top_sessions?period=&limit=  -> { period, sessions:[...] }
+// GET /api/session_detail?...      -> { summary, groups, source_files }
+// GET /api/rates                   -> { usd_cny }
+// POST /api/notify {kind,message}  -> { ok } （本机桌面通知）
 // ===============================================================
 
 let dailyChart = null;
 let currentPeriod = 'today';
 let CNY_RATE = 7.25;
+// 请求序号：防止慢响应覆盖新响应（切周期/定时刷新时的竞态）
+let breakdownSeq = 0;
+let topSessionsSeq = 0;
 
 const SOURCE_META = {
   claude:   { label: 'Claude',   color: '#f97316' },
@@ -82,7 +88,6 @@ function toggleSettings() {
 function dismissAlert() {
   sessionStorage.setItem('tokenstat_alert_dismissed', '1');
   document.getElementById('alertBar').style.display = 'none';
-  document.body.classList.remove('has-alert');
 }
 function checkAlert(todayData) {
   if (sessionStorage.getItem('tokenstat_alert_dismissed')) return;
@@ -97,12 +102,10 @@ function checkAlert(todayData) {
     const msg = msgs.join(' · ');
     document.getElementById('alertMsg').textContent = msg;
     bar.style.display = 'flex';
-    document.body.classList.add('has-alert');
     maybeNotifyAlert(msg);
   } else {
     bar.style.display = 'none';
-    document.body.classList.remove('has-alert');
-  }
+    }
 }
 let refreshTimer = null;
 
@@ -125,8 +128,18 @@ function fmtCN(n) {
   let v = Math.round(Number(n) || 0);
   const sign = v < 0 ? '-' : '';
   v = Math.abs(v);
-  for (const [base, label] of _CN_UNITS) {
-    if (v >= base) return sign + stripZeros((v / base).toFixed(2)) + label;
+  for (let i = 0; i < _CN_UNITS.length; i++) {
+    const [base, label] = _CN_UNITS[i];
+    if (v >= base) {
+      const s = stripZeros((v / base).toFixed(2));
+      // 边界：四舍五入后进位满一个上级单位（相邻单位差 1e4），改用上级单位
+      // 避免显示「10000万」而非「1亿」
+      if (parseFloat(s) >= 1e4 && i > 0) {
+        const [upBase, upLabel] = _CN_UNITS[i - 1];
+        return sign + stripZeros((v / upBase).toFixed(2)) + upLabel;
+      }
+      return sign + s + label;
+    }
   }
   return sign + v.toLocaleString('en-US');
 }
@@ -153,7 +166,8 @@ async function postJSON(url, payload) {
 async function maybeNotifyAlert(message) {
   const cfg = loadAlertConfig();
   if (!cfg.desktop_notify) return;
-  const key = 'tokenstat_notify_' + message;
+  // 按「日期」去重：message 内嵌实时金额，若含金额则每次刷新键都变会重复弹窗
+  const key = 'tokenstat_notify_' + new Date().toISOString().slice(0, 10);
   if (sessionStorage.getItem(key)) return;
   sessionStorage.setItem(key, '1');
   try {
@@ -346,7 +360,9 @@ async function loadInsights() {
 }
 
 async function loadTopSessions() {
+  const my = ++topSessionsSeq;
   const b = await getJSON(`/api/top_sessions?period=${currentPeriod}&limit=10`);
+  if (my !== topSessionsSeq) return;  // 已有更新的请求，丢弃这次迟到响应
   document.querySelector('#topSessionsTable tbody').innerHTML =
     b.sessions.map((r, i) => `<tr>
       <td class="num">${i + 1}</td>
@@ -414,7 +430,9 @@ async function loadSessionDetail(sessionId) {
 }
 
 async function loadBreakdown() {
+  const my = ++breakdownSeq;
   const b = await getJSON(`/api/breakdown?period=${currentPeriod}`);
+  if (my !== breakdownSeq) return;  // 已有更新的请求，丢弃这次迟到响应
   const mRows = b.by_model;
   const mTotalTokens = mRows.reduce((s, r) => s + (r.total || 0), 0);
   const mTotalCost   = mRows.reduce((s, r) => s + (r.cost_usd || 0), 0);
@@ -455,7 +473,7 @@ async function loadBreakdown() {
 async function refreshAll() {
   try {
     const sec = await loadSummary();
-    await Promise.all([loadDaily(), loadBreakdown(), loadTopSessions(), loadAudit(), loadInsights()]);
+    await Promise.all([loadRates(), loadDaily(), loadBreakdown(), loadTopSessions(), loadAudit(), loadInsights()]);
     return sec;
   } catch (e) {
     document.getElementById('meta').textContent = '加载失败: ' + e.message;

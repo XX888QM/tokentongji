@@ -39,7 +39,7 @@ def _get_usd_cny_rate() -> float:
             headers={"User-Agent": "tokenstat/1.0"},
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read())
+            data = json.loads(resp.read(1_000_000))
         rate = float(data["rates"]["CNY"])
         with _RATE_LOCK:
             _RATE_CACHE["rate"] = rate
@@ -133,8 +133,6 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/breakdown":
                 period = qs.get("period", ["month"])[0]
                 self._api_breakdown(period)
-            elif path == "/api/meta":
-                self._api_meta()
             elif path == "/api/audit":
                 self._api_audit()
             elif path == "/api/health":
@@ -212,14 +210,6 @@ class Handler(BaseHTTPRequestHandler):
         conn = self._conn()
         try:
             data = aggregate.breakdown(conn, period)
-        finally:
-            conn.close()
-        self._send_json(data)
-
-    def _api_meta(self):
-        conn = self._conn()
-        try:
-            data = aggregate.meta(conn)
         finally:
             conn.close()
         self._send_json(data)
@@ -331,7 +321,8 @@ class Handler(BaseHTTPRequestHandler):
                 text=True,
                 timeout=3,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+            # ValueError: message 含 NUL 字节时 subprocess 会抛「embedded null byte」
             self._send_json({"ok": False, "error": str(exc)}, status=500)
             return
         if result.returncode != 0:
