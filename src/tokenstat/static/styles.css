@@ -220,6 +220,14 @@ tfoot tr.tfoot-total td { border-top:1px solid var(--border); border-bottom:none
 .badge.openclaw { background:rgba(212,124,242,0.12); color:#d67cf2; }
 .session-link { color:var(--accent); cursor:pointer; background:none; border:none; font:inherit; padding:0; font-weight:500; }
 .session-link:hover { text-decoration:underline; }
+.pager { display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-top:10px; }
+.pager-btn {
+  background:var(--surface2); border:1px solid var(--border); color:var(--text3);
+  border-radius:6px; padding:4px 11px; font-size:13px; cursor:pointer; transition:color .12s, border-color .12s;
+}
+.pager-btn:hover:not(:disabled) { color:var(--text); border-color:var(--text3); }
+.pager-btn:disabled { opacity:0.35; cursor:default; }
+.pager-info { font-size:13px; color:var(--text3); font-variant-numeric:tabular-nums; }
 
 /* ---- chart ---- */
 .chart-wrap { height:280px; }

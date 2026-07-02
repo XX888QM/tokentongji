@@ -23,6 +23,10 @@ let CNY_RATE = 7.25;
 // 请求序号：防止慢响应覆盖新响应（切周期/定时刷新时的竞态）
 let breakdownSeq = 0;
 let topSessionsSeq = 0;
+// 「按项目」分页：页大小跟随「按模型」行数，使两表合计行水平对齐
+let projectRows = [];
+let projectPage = 0;
+let projectPageSize = 8;
 
 const SOURCE_META = {
   claude:   { label: 'Claude',   color: '#f97316' },
@@ -453,21 +457,49 @@ async function loadBreakdown() {
         <td class="num">${fmtCost(mTotalCost)}</td>
       </tr>` : '';
 
-  const pRows = b.by_project;
-  const pTotalTokens = pRows.reduce((s, r) => s + (r.total || 0), 0);
-  const pTotalCost   = pRows.reduce((s, r) => s + (r.cost_usd || 0), 0);
+  projectRows = b.by_project;
+  // 每页行数 = 「按模型」行数，让两表的「合计」行水平对齐（下限 6 防病态分页）
+  projectPageSize = Math.max(mRows.length, 6);
+  renderProjectPage();
+}
+
+// 渲染「按项目」当前页；合计行始终是全量合计（非本页），刷新不重置页码
+function renderProjectPage() {
+  const rows = projectRows;
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / projectPageSize));
+  projectPage = Math.min(Math.max(projectPage, 0), pages - 1);
+  const start = projectPage * projectPageSize;
   document.querySelector('#projectTable tbody').innerHTML =
-    pRows.map((r) => `<tr>
+    rows.slice(start, start + projectPageSize).map((r) => `<tr>
         <td>${esc(r.project) || '(未知)'}</td><td>${badge(esc(r.source))}</td>
         ${numCell(r.total)}
         <td class="num">${fmtCost(r.cost_usd)}</td>
       </tr>`).join('') || '<tr><td colspan="4">暂无数据</td></tr>';
-  document.querySelector('#projectTable tfoot').innerHTML = pRows.length
+  const tTokens = rows.reduce((s, r) => s + (r.total || 0), 0);
+  const tCost   = rows.reduce((s, r) => s + (r.cost_usd || 0), 0);
+  document.querySelector('#projectTable tfoot').innerHTML = total
     ? `<tr class="tfoot-total">
         <td colspan="2">合计</td>
-        ${numCell(pTotalTokens)}
-        <td class="num">${fmtCost(pTotalCost)}</td>
+        ${numCell(tTokens)}
+        <td class="num">${fmtCost(tCost)}</td>
       </tr>` : '';
+  const pager = document.getElementById('projectPager');
+  if (total > projectPageSize) {
+    pager.innerHTML =
+      `<button class="pager-btn" onclick="projectGoPage(-1)"${projectPage === 0 ? ' disabled' : ''}>‹ 上一页</button>` +
+      `<span class="pager-info">第 ${projectPage + 1} / ${pages} 页 · 共 ${total} 项</span>` +
+      `<button class="pager-btn" onclick="projectGoPage(1)"${projectPage >= pages - 1 ? ' disabled' : ''}>下一页 ›</button>`;
+    pager.style.display = 'flex';
+  } else {
+    pager.innerHTML = '';
+    pager.style.display = 'none';
+  }
+}
+
+function projectGoPage(delta) {
+  projectPage += delta;
+  renderProjectPage();
 }
 
 async function refreshAll() {
@@ -488,6 +520,7 @@ function setupPeriodToggle() {
     document.querySelectorAll('#periodToggle button').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
     currentPeriod = btn.dataset.period;
+    projectPage = 0;  // 切周期回到第 1 页（定时刷新不重置，避免打断翻页浏览）
     loadBreakdown();
     loadTopSessions();
     document.getElementById('sessionDetail').hidden = true;
