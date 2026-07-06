@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tokenstat import db, ingest
 
@@ -265,6 +266,69 @@ class TestOpenclaWV3Ingest(unittest.TestCase):
         ])
         ingest._ingest_openclaw_v3_file(self.conn, f)
         self.assertEqual(self._rows()["c"], 1)
+
+
+class TestHermesIngest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "state.db"
+        self.conn = db.get_conn(":memory:")
+        db.init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _make_db(self):
+        import sqlite3
+        c = sqlite3.connect(str(self.db_path))
+        c.execute(
+            "CREATE TABLE sessions (id TEXT PRIMARY KEY, model TEXT, cwd TEXT, "
+            "started_at REAL, parent_session_id TEXT, input_tokens INTEGER DEFAULT 0, "
+            "output_tokens INTEGER DEFAULT 0, cache_read_tokens INTEGER DEFAULT 0, "
+            "cache_write_tokens INTEGER DEFAULT 0, reasoning_tokens INTEGER DEFAULT 0)"
+        )
+        c.commit()
+        c.close()
+
+    def _upsert(self, **kw):
+        import sqlite3
+        c = sqlite3.connect(str(self.db_path))
+        c.execute(
+            "INSERT INTO sessions (id, model, cwd, started_at, input_tokens, output_tokens) "
+            "VALUES (:id,:model,:cwd,:started_at,:input_tokens,:output_tokens) "
+            "ON CONFLICT(id) DO UPDATE SET input_tokens=:input_tokens, output_tokens=:output_tokens",
+            kw,
+        )
+        c.commit()
+        c.close()
+
+    def _sum(self):
+        cur = self.conn.execute(
+            "SELECT COUNT(*) c, COALESCE(SUM(input_tokens),0) i, COALESCE(SUM(output_tokens),0) o "
+            "FROM usage_events WHERE source='hermes'"
+        )
+        r = cur.fetchone()
+        return r["c"], r["i"], r["o"]
+
+    def test_growing_session_rescanned_without_duplication(self):
+        # 长会话 token 数随进行增长；全表重扫 + dedup_key=session id + on_conflict='max'
+        # 应该只留 1 行且反映最新累计值，不会重复计数
+        self._make_db()
+        with patch("tokenstat.ingest.config.HERMES_STATE_DB", self.db_path):
+            self._upsert(id="s1", model="gpt-5.5", cwd="/p", started_at=1700000000,
+                         input_tokens=100, output_tokens=50)
+            ingest._ingest_hermes(self.conn)
+            self.assertEqual(self._sum(), (1, 100, 50))
+
+            self._upsert(id="s1", model="gpt-5.5", cwd="/p", started_at=1700000000,
+                         input_tokens=300, output_tokens=120)  # 同一会话继续增长
+            ingest._ingest_hermes(self.conn)
+            self.assertEqual(self._sum(), (1, 300, 120))  # 仍 1 行，取最新值，不是叠加
+
+    def test_missing_db_returns_zero(self):
+        with patch("tokenstat.ingest.config.HERMES_STATE_DB", Path(self.tmp.name) / "nope.db"):
+            self.assertEqual(ingest._ingest_hermes(self.conn), 0)
 
 
 if __name__ == "__main__":

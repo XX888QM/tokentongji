@@ -204,7 +204,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(data)
 
     def _api_breakdown(self, period: str):
-        if period not in ("today", "week", "month", "year"):
+        if period not in ("today", "week", "month", "all"):
             self._send_json({"error": f"bad period: {period}"}, status=400)
             return
         conn = self._conn()
@@ -228,6 +228,7 @@ class Handler(BaseHTTPRequestHandler):
             "codex": [_path_status(path) for path in config.CODEX_SESSION_DIRS],
             "opencode": _path_status(config.OPENCODE_DB_PATH),
             "openclaw": _path_status(config.OPENCLAW_SESSION_DIR),
+            "hermes": _path_status(config.HERMES_STATE_DB),
         }
         self._send_json(data)
 
@@ -259,7 +260,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(data)
 
     def _api_top_sessions(self, period: str, limit_raw: str):
-        if period not in ("today", "week", "month", "year"):
+        if period not in ("today", "week", "month", "all"):
             self._send_json({"error": f"bad period: {period}"}, status=400)
             return
         try:
@@ -275,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(data)
 
     def _api_session_detail(self, session_id: str, period: str):
-        if period not in ("today", "week", "month", "year"):
+        if period not in ("today", "week", "month", "all"):
             self._send_json({"error": f"bad period: {period}"}, status=400)
             return
         if not session_id or len(session_id) > 128:

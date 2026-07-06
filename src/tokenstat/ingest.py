@@ -22,6 +22,7 @@ from .parsers import claude as claude_parser
 from .parsers import codex as codex_parser
 from .parsers import opencode as opencode_parser
 from .parsers import openclaw as openclaw_parser
+from .parsers import hermes as hermes_parser
 
 MAX_LINE_BYTES = 50 * 1024 * 1024
 
@@ -162,6 +163,18 @@ def _ingest_opencode(conn) -> int:
     return added
 
 
+def _ingest_hermes(conn) -> int:
+    """全量重扫 Hermes sessions 表；session 行随进行原地增长，没有稳定游标可用，
+    靠 dedup_key + on_conflict='max' 幂等吸收增长，不会重复计数。"""
+    db_path = config.HERMES_STATE_DB
+    if not db_path.is_file():
+        return 0
+    records = hermes_parser.fetch_records(db_path)
+    if not records:
+        return 0
+    return db.insert_records(conn, records, on_conflict="max")
+
+
 def _ingest_openclaw_v3_file(conn, path: Path) -> int:
     """增量解析 openclaw v3 session 文件，ctx 跨批次持久化。"""
     try:
@@ -231,6 +244,7 @@ def run_once() -> dict:
             records_added += _ingest_file(conn, path, SOURCE_CODEX, default_model)
             files_scanned += 1
         records_added += _ingest_opencode(conn)
+        records_added += _ingest_hermes(conn)
         for path in openclaw_files():
             records_added += _ingest_file(conn, path, SOURCE_OPENCLAW, "")
             files_scanned += 1

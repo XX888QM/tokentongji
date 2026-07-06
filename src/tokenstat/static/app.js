@@ -33,6 +33,7 @@ const SOURCE_META = {
   codex:    { label: 'Codex',    color: '#22c55e' },
   opencode: { label: 'Opencode', color: '#a78bfa' },
   openclaw: { label: 'Openclaw', color: '#d67cf2' },
+  hermes:   { label: 'Hermes',   color: '#38bdf8' },
 };
 const SOURCE_ORDER = Object.keys(SOURCE_META);
 
@@ -229,7 +230,7 @@ async function loadSummary() {
     statCard('昨天', s.periods.yesterday) +
     statCard('近7天', s.periods.week) +
     statCard('本月', s.periods.month) +
-    statCard('今年', s.periods.year);
+    statCard('累计', s.periods.all);
   document.getElementById('meta').textContent =
     `更新于 ${s.generated_at} · 每 ${s.refresh_sec}s`;
   document.getElementById('pricingNote').textContent = s.pricing_note || '';

@@ -1,7 +1,7 @@
 # Token 统计仪表盘
 
-统计本机 **Claude Code**、**Codex**、**OpenCode**、**OpenClaw** 四类工具的 token 用量，
-按天 / 周 / 月 / 年汇总，本地 Web 仪表盘实时展示。纯本地日志解析，**不调用任何外部 API（汇率除外）、零第三方依赖**。
+统计本机 **Claude Code**、**Codex**、**OpenCode**、**OpenClaw**、**Hermes** 五类工具的 token 用量，
+按天 / 周 / 月 / 累计汇总，本地 Web 仪表盘实时展示。纯本地日志解析，**不调用任何外部 API（汇率除外）、零第三方依赖**。
 
 ## 数据来源
 
@@ -11,6 +11,7 @@
 | Codex | `~/.codex/sessions` + `archived_sessions` | `token_count` 的累积 `total_token_usage` 做相邻差分（防 2x 高估） |
 | OpenCode | `~/.local/share/opencode/opencode.db` | 直读 SQLite，按消息时间戳增量同步；reasoning token 计入 output |
 | OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | 兼容 `*.trajectory.jsonl`（`model.completed`）与 v3 session（assistant message usage）两种格式 |
+| Hermes | `~/.hermes/state.db` | 直读 SQLite `sessions` 表（按 session 原地累积的总量，非逐条事件），全表重扫 + `dedup_key` 取最大值幂等同步 |
 
 Claude 与 Codex 两边数据已用独立脚本交叉对账，**0.000% 误差**。
 
@@ -34,10 +35,10 @@ open http://127.0.0.1:8787
 
 ## 仪表盘内容
 
-- 顶部卡片：今日 / 近 7 天 / 本月 / 今年 总 token + 估算费用（人民币，实时 USD→CNY 汇率），四来源占比分列
+- 顶部卡片：今日 / 近 7 天 / 本月 / 累计 总 token + 估算费用（人民币，实时 USD→CNY 汇率），五来源占比分列
 - 数字按万进制单位显示（万 / 亿 / 万亿 / 京 / 垓），悬停看精确值
-- 折线图：近 30 天每日 token 趋势，四来源分线
-- 拆分表：按 model、按项目（cwd）的 token + 费用排行，带合计行，cache token 单列，可切今日 / 近 7 天 / 本月 / 今年
+- 折线图：近 30 天每日 token 趋势，五来源分线
+- 拆分表：按 model、按项目（cwd）的 token + 费用排行，带合计行，cache token 单列，可切今日 / 近 7 天 / 本月 / 累计
 - 运行审计：数据源路径状态、入库进度、口径风险（未知模型、跨来源会话等）
 - 异常洞察：当日最大贡献模型 / 项目，环比基线对比
 - TOP 10 最贵会话，点击展开按模型 / 文件明细
@@ -88,10 +89,11 @@ src/tokenstat/
     codex.py     Codex 解析（total 差分 + carry-forward）
     opencode.py  OpenCode 解析（SQLite 直读，增量同步）
     openclaw.py  OpenClaw 解析（trajectory + v3 双格式）
+    hermes.py    Hermes 解析（SQLite sessions 表，全表重扫 + MAX 幂等）
   ingest.py      增量入库（字节 offset 断点续读）
   pricing.py     费用估算 + model 归一化
   pricing.json   单价表（anthropic / openai / deepseek / local）
-  aggregate.py   按天/周/月/年聚合查询
+  aggregate.py   按天/周/月/累计聚合查询
   server.py      http.server（API + 静态 + 汇率 + 后台 ingest 线程）
   static/        index.html / app.js / styles.css / chart.min.js
 ```
