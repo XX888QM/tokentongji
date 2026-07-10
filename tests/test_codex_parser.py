@@ -4,8 +4,12 @@ from tokenstat.parsers import codex
 from tokenstat.parsers.codex import CodexState
 
 
-def _session_meta(cwd, sid="sess-uuid"):
-    return {"type": "session_meta", "payload": {"id": sid, "cwd": cwd}}
+def _session_meta(cwd, sid="sess-uuid", forked_from=None):
+    payload = {"id": sid, "cwd": cwd}
+    if forked_from:
+        payload["forked_from_id"] = forked_from
+        payload["parent_thread_id"] = forked_from
+    return {"type": "session_meta", "payload": payload}
 
 
 def _turn_context(model, cwd):
@@ -100,6 +104,48 @@ class TestCodexParser(unittest.TestCase):
         self.assertEqual(s2.prev_total["total_tokens"], 1000)
         rec = codex.process_record(_token_count(1500, 800, 200, 700), "/f", 2, s2)
         self.assertEqual(rec.output_tokens, 300)  # 差分基于恢复的 prev_total
+
+    def test_fork_first_snapshot_is_baseline_not_delta(self):
+        # fork 文件：首条 token_count 继承父会话累积量（上亿级），只作基线
+        codex.process_record(_session_meta("/c", sid="child", forked_from="parent"), "/f", 0, self.state)
+        codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 1, self.state)
+        inherited = codex.process_record(
+            _token_count(135_000_000, 134_000_000, 132_000_000, 1_000_000), "/f", 2, self.state
+        )
+        self.assertIsNone(inherited)  # 父会话的量不重复计
+        # 之后的差分基于继承基线，正常计增量
+        rec = codex.process_record(
+            _token_count(135_000_500, 134_000_300, 132_000_100, 1_000_200), "/f", 3, self.state
+        )
+        self.assertEqual(rec.output_tokens, 200)
+        self.assertEqual(rec.cache_read_tokens, 100)
+        self.assertEqual(rec.total_tokens, 500)
+
+    def test_midfile_sid_change_keeps_baseline(self):
+        # 同一文件内交错出现父线程 meta：sid 变化不重置基线（计数器连续）
+        codex.process_record(_session_meta("/c", sid="child", forked_from="parent"), "/f", 0, self.state)
+        codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 1, self.state)
+        codex.process_record(_token_count(1000, 600, 200, 400), "/f", 2, self.state)  # 基线
+        codex.process_record(_token_count(1500, 800, 300, 700), "/f", 3, self.state)
+        # 中段插入父线程 session_meta（无 fork 标记）
+        codex.process_record(_session_meta("/c", sid="parent"), "/f", 4, self.state)
+        rec = codex.process_record(_token_count(1800, 1000, 400, 800), "/f", 5, self.state)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.total_tokens, 300)  # 1800-1500，而非从 0 重计 1800
+        self.assertEqual(rec.session_id, "parent")  # 归属跟着 sid 走
+        # 中段再出现带 fork 标记的 meta：基线已建立，不触发 baseline 跳过
+        codex.process_record(_session_meta("/c", sid="child2", forked_from="parent"), "/f", 6, self.state)
+        rec2 = codex.process_record(_token_count(2000, 1100, 450, 900), "/f", 7, self.state)
+        self.assertIsNotNone(rec2)
+        self.assertEqual(rec2.total_tokens, 200)
+
+    def test_pending_baseline_ctx_roundtrip(self):
+        # fork meta 与首条 token_count 被 ingest 分在两个批次时，标记必须跨批次存活
+        codex.process_record(_session_meta("/c", sid="child", forked_from="parent"), "/f", 0, self.state)
+        s2 = CodexState.from_ctx(self.state.to_ctx(), default_model="gpt-5.5")
+        self.assertTrue(s2.pending_baseline)
+        inherited = codex.process_record(_token_count(135_000_000, 134_000_000, 132_000_000, 1_000_000), "/f", 1, s2)
+        self.assertIsNone(inherited)
 
     def test_sum_of_deltas_equals_final_total(self):
         # 验证差分法总量正确：多条累积快照的增量和 == 最后 total

@@ -6,6 +6,11 @@
   turn_context.model / turn_context.cwd（cwd 优先 turn_context，session_meta.cwd 可能被改写）。
 - token 取数：对累积 total_token_usage 做相邻**差分**得每轮增量，按事件时间戳分桶。
   绝不对 total 求和、绝不累加 last（last 含完整 context、事件成对重发 → 2x 高估）。
+- fork/subagent（Codex Desktop）：session_meta 带 forked_from_id 的文件，首条
+  token_count **继承父会话的累积量**（实测上亿），只能作差分基线不能计增量，
+  否则父会话被整段重复计数（曾造成 ~29% 虚高）。
+- 同一文件内会交错出现父/子线程的 session_meta，但 total_token_usage 是文件内
+  **连续**计数器 → sid 变化绝不能重置差分基线（重置 = 整段累积量重计一遍）。
 - 跳过 info is None（rate-limit 心跳）。
 - model 缺失回退 config.toml 默认（默认 gpt-5.5），再缺标 unknown，不丢弃。
 - input_tokens 含 cached → 归一化时拆出 fresh_input = input - cached。
@@ -60,6 +65,8 @@ class CodexState:
     session_id: str = ""
     prev_total: dict = field(default_factory=_zero_total)
     default_model: str = _DEFAULT_MODEL_FALLBACK
+    # fork 文件：下一条 token_count 是继承来的父会话累积量，只作基线不计增量
+    pending_baseline: bool = False
 
     def to_ctx(self) -> dict:
         """导出可持久化上下文（不含 default_model，那是运行期注入）。"""
@@ -68,6 +75,7 @@ class CodexState:
             "cur_cwd": self.cur_cwd,
             "session_id": self.session_id,
             "prev_total": dict(self.prev_total),
+            "pending_baseline": self.pending_baseline,
         }
 
     @classmethod
@@ -81,6 +89,7 @@ class CodexState:
             session_id=ctx.get("session_id", "") or "",
             prev_total=prev_total,
             default_model=default_model or _DEFAULT_MODEL_FALLBACK,
+            pending_baseline=bool(ctx.get("pending_baseline")),
         )
 
 
@@ -98,11 +107,16 @@ def process_record(
     if env_type == "session_meta":
         sid = payload.get("id")
         if sid and sid != state.session_id:
-            # 新会话：差分基线清零，让新会话的 cwd/model 重新注入
-            state.prev_total = _zero_total()
-            state.cur_cwd = None
-            state.cur_model = None
+            # 只更新归属 sid，**不重置差分基线**：Codex Desktop 会把父/子线程的
+            # session_meta 交错写进同一文件，而 total_token_usage 是文件内连续
+            # 计数器，重置基线会把整段累积量再计一遍（实测 ~29% 虚高）。
             state.session_id = sid
+        if payload.get("forked_from_id") or payload.get("parent_thread_id"):
+            # fork 出的 subagent 文件：首条 token_count 继承父会话累积量，
+            # 只能作基线。仅在尚未见过任何 token_count 时生效（文件中段的
+            # fork meta 不影响已建立的连续基线）。
+            if all(v == 0 for v in state.prev_total.values()):
+                state.pending_baseline = True
         cwd = payload.get("cwd")
         if cwd and state.cur_cwd is None:
             # session_meta.cwd 仅作初值；后续 turn_context.cwd 更权威会覆盖
@@ -132,6 +146,13 @@ def process_record(
         return None
 
     cur = {k: int(tot.get(k, 0) or 0) for k in _FIELDS}
+    if state.pending_baseline:
+        state.pending_baseline = False
+        if all(v == 0 for v in state.prev_total.values()):
+            # 继承的父会话累积量：作基线，不产出增量记录
+            # （代价：漏掉 fork 自己第一轮 ~1e5 级 token，相对上亿虚高可忽略）
+            state.prev_total = cur
+            return None
     prev = state.prev_total
     state.prev_total = cur
 
