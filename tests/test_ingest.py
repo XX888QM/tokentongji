@@ -331,5 +331,96 @@ class TestHermesIngest(unittest.TestCase):
             self.assertEqual(ingest._ingest_hermes(self.conn), 0)
 
 
+class TestGrokIngest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.get_conn(":memory:")
+        db.init_db(self.conn)
+        self.log = Path(self.tmp.name) / "unified.jsonl"
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _sum(self):
+        cur = self.conn.execute(
+            "SELECT COUNT(*) c, COALESCE(SUM(input_tokens),0) i, "
+            "COALESCE(SUM(output_tokens),0) o, COALESCE(SUM(cache_read_tokens),0) cr "
+            "FROM usage_events WHERE source='grok'"
+        )
+        r = cur.fetchone()
+        return r["c"], r["i"], r["o"], r["cr"]
+
+    def test_incremental_and_carry_forward(self):
+        lines = [
+            {
+                "ts": "2026-07-09T10:00:00.000Z",
+                "sid": "s1",
+                "msg": "model changed",
+                "ctx": {"model": "grok-4.5"},
+            },
+            {
+                "ts": "2026-07-09T10:00:01.000Z",
+                "sid": "s1",
+                "msg": "session created",
+                "ctx": {"cwd": "/proj/a"},
+            },
+            {
+                "ts": "2026-07-09T10:00:05.000Z",
+                "sid": "s1",
+                "msg": "shell.turn.inference_done",
+                "ctx": {
+                    "loop_index": 0,
+                    "prompt_tokens": 1000,
+                    "cached_prompt_tokens": 200,
+                    "completion_tokens": 40,
+                    "reasoning_tokens": 20,
+                },
+            },
+        ]
+        _w(self.log, lines)
+        with patch("tokenstat.ingest.config.GROK_LOG_PATH", self.log):
+            n = ingest._ingest_grok(self.conn)
+            self.assertEqual(n, 1)
+            self.assertEqual(self._sum(), (1, 800, 40, 200))
+
+            # 无新增
+            self.assertEqual(ingest._ingest_grok(self.conn), 0)
+
+            # 追加第二条；model/cwd 应从 ctx 延续
+            _w(
+                self.log,
+                [
+                    {
+                        "ts": "2026-07-09T10:01:00.000Z",
+                        "sid": "s1",
+                        "msg": "shell.turn.inference_done",
+                        "ctx": {
+                            "loop_index": 1,
+                            "prompt_tokens": 500,
+                            "cached_prompt_tokens": 100,
+                            "completion_tokens": 10,
+                            "reasoning_tokens": 5,
+                        },
+                    }
+                ],
+            )
+            self.assertEqual(ingest._ingest_grok(self.conn), 1)
+            self.assertEqual(self._sum(), (2, 1200, 50, 300))
+
+            cur = self.conn.execute(
+                "SELECT model, project FROM usage_events WHERE source='grok' ORDER BY pos"
+            )
+            rows = cur.fetchall()
+            self.assertEqual(rows[0]["model"], "grok-4.5")
+            self.assertEqual(rows[0]["project"], "/proj/a")
+            self.assertEqual(rows[1]["model"], "grok-4.5")
+            self.assertEqual(rows[1]["project"], "/proj/a")
+
+    def test_missing_log_returns_zero(self):
+        with patch("tokenstat.ingest.config.GROK_LOG_PATH", Path(self.tmp.name) / "nope.jsonl"):
+            self.assertEqual(ingest._ingest_grok(self.conn), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

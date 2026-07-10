@@ -23,6 +23,7 @@ from .parsers import codex as codex_parser
 from .parsers import opencode as opencode_parser
 from .parsers import openclaw as openclaw_parser
 from .parsers import hermes as hermes_parser
+from .parsers import grok as grok_parser
 
 MAX_LINE_BYTES = 50 * 1024 * 1024
 
@@ -175,6 +176,67 @@ def _ingest_hermes(conn) -> int:
     return db.insert_records(conn, records, on_conflict="max")
 
 
+def _ingest_grok(conn) -> int:
+    """增量解析 Grok unified.jsonl；model/cwd 按 sid carry-forward 并持久化到 ctx。"""
+    path = config.GROK_LOG_PATH
+    if not path.is_file():
+        return 0
+    try:
+        st = path.stat()
+    except OSError:
+        return 0
+
+    source_file = str(path)
+    state = db.get_ingest_state(conn, source_file)
+    start_offset, reset_ctx = _should_read(state, st.st_ino, st.st_size, st.st_mtime)
+
+    if state is not None and start_offset == state["offset"] and st.st_size == state["offset"]:
+        return 0
+
+    ctx = {} if reset_ctx else ((state["ctx"] or {}) if state else {})
+    gstate = grok_parser.GrokState.from_ctx(ctx)
+
+    recs = []
+    consumed = start_offset
+    pos = start_offset
+
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(start_offset)
+            for raw in fh:
+                line_start = pos
+                pos += len(raw)
+                if not raw.endswith(b"\n"):
+                    break
+                consumed = pos
+                if len(raw) > MAX_LINE_BYTES:
+                    continue
+                try:
+                    obj = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                rec = grok_parser.process_record(obj, source_file, line_start, gstate)
+                if rec is not None:
+                    recs.append(rec)
+    except OSError:
+        return 0
+
+    added = 0
+    if recs:
+        added = db.insert_records(conn, recs, on_conflict="ignore")
+
+    db.set_ingest_state(
+        conn,
+        source_file,
+        inode=st.st_ino,
+        offset=consumed,
+        size=st.st_size,
+        mtime=st.st_mtime,
+        ctx=gstate.to_ctx(),
+    )
+    return added
+
+
 def _ingest_openclaw_v3_file(conn, path: Path) -> int:
     """增量解析 openclaw v3 session 文件，ctx 跨批次持久化。"""
     try:
@@ -250,6 +312,9 @@ def run_once() -> dict:
             files_scanned += 1
         for path in openclaw_v3_files():
             records_added += _ingest_openclaw_v3_file(conn, path)
+            files_scanned += 1
+        if config.GROK_LOG_PATH.is_file():
+            records_added += _ingest_grok(conn)
             files_scanned += 1
     finally:
         conn.close()

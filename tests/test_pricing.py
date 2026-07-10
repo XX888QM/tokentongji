@@ -47,6 +47,31 @@ class TestNormalization(unittest.TestCase):
     def test_gpt5_versioned(self):
         self.assertEqual(pricing.rates_for_model("gpt-5.4", self.p)["input"], 2.5)
 
+    def test_gpt56_flagship_pricing(self):
+        sol = pricing.rates_for_model("gpt-5.6-sol", self.p)
+        terra = pricing.rates_for_model("gpt-5.6-terra", self.p)
+        luna = pricing.rates_for_model("gpt-5.6-luna", self.p)
+        self.assertEqual(sol["input"], 5.0)
+        self.assertEqual(sol["output"], 30.0)
+        self.assertEqual(terra["input"], 2.5)
+        self.assertEqual(terra["output"], 15.0)
+        self.assertEqual(luna["input"], 1.0)
+        self.assertEqual(luna["output"], 6.0)
+
+    def test_mythos_same_as_fable(self):
+        r = pricing.rates_for_model("claude-mythos-5", self.p)
+        self.assertEqual(r["input"], 10.0)
+        self.assertEqual(r["output"], 50.0)
+
+    def test_grok_pricing(self):
+        r = pricing.rates_for_model("grok-4.5", self.p)
+        self.assertEqual(r["input"], 2.0)
+        self.assertEqual(r["output"], 6.0)
+        self.assertEqual(r["cache_read"], 0.20)
+        # 家族兜底
+        fam = pricing.rates_for_model("grok-99-future", self.p)
+        self.assertEqual(fam["input"], 2.0)
+
     def test_cache_window_1h(self):
         r5 = pricing.rates_for_model("claude-opus-4-7", self.p, cache_window="5m")
         r1 = pricing.rates_for_model("claude-opus-4-7", self.p, cache_window="1h")

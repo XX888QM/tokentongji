@@ -101,6 +101,7 @@ class TestDailyEndpointFallback(unittest.TestCase):
         self.assertIn("ingest_state", body)
         self.assertIn("opencode", body["data_sources"])
         self.assertIn("openclaw", body["data_sources"])
+        self.assertIn("grok", body["data_sources"])
 
     def test_health_endpoint_returns_200(self):
         code, body = _call_get("/api/health", self._db_path)

@@ -28,6 +28,8 @@ CODEX_SESSION_DIRS = (
 OPENCODE_DB_PATH = HOME / ".local" / "share" / "opencode" / "opencode.db"
 OPENCLAW_SESSION_DIR = HOME / ".openclaw" / "agents" / "main" / "sessions"
 HERMES_STATE_DB = HOME / ".hermes" / "state.db"
+# Grok CLI 统一日志（shell.turn.inference_done 带真实 token）
+GROK_LOG_PATH = Path(os.environ.get("TOKENSTAT_GROK_LOG", str(HOME / ".grok" / "logs" / "unified.jsonl")))
 
 # ---- 数据库 ----
 DATA_DIR = Path(os.environ.get("TOKENSTAT_DATA_DIR", str(Path(__file__).resolve().parent.parent.parent / "data")))

@@ -129,6 +129,8 @@ body::before {
 .splitbar .codex { background:var(--codex); transition:width .5s ease; }
 .splitbar .opencode { background:var(--accent); transition:width .5s ease; }
 .splitbar .openclaw { background:#d67cf2; transition:width .5s ease; }
+.splitbar .hermes { background:#38bdf8; transition:width .5s ease; }
+.splitbar .grok { background:#fbbf24; transition:width .5s ease; }
 .split-row {
   display:flex; align-items:center; gap:8px; font-size:15px; margin-bottom:8px;
 }
@@ -137,6 +139,8 @@ body::before {
 .split-row .dot.codex { background:var(--codex); }
 .split-row .dot.opencode { background:var(--accent); }
 .split-row .dot.openclaw { background:#d67cf2; }
+.split-row .dot.hermes { background:#38bdf8; }
+.split-row .dot.grok { background:#fbbf24; }
 .split-row .label { color:var(--text2); min-width:74px; }
 .split-row .value { color:var(--text); font-weight:600; }
 .split-row .pct { color:var(--text3); margin-left:auto; font-size:13px; }
@@ -219,6 +223,7 @@ tfoot tr.tfoot-total td { border-top:1px solid var(--border); border-bottom:none
 .badge.opencode { background:var(--accent-dim); color:var(--accent); }
 .badge.openclaw { background:rgba(212,124,242,0.12); color:#d67cf2; }
 .badge.hermes { background:rgba(56,189,248,0.12); color:#38bdf8; }
+.badge.grok { background:rgba(251,191,36,0.14); color:#fbbf24; }
 .session-link { color:var(--accent); cursor:pointer; background:none; border:none; font:inherit; padding:0; font-weight:500; }
 .session-link:hover { text-decoration:underline; }
 .pager { display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-top:10px; }

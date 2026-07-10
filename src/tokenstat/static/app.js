@@ -34,6 +34,7 @@ const SOURCE_META = {
   opencode: { label: 'Opencode', color: '#a78bfa' },
   openclaw: { label: 'Openclaw', color: '#d67cf2' },
   hermes:   { label: 'Hermes',   color: '#38bdf8' },
+  grok:     { label: 'Grok',     color: '#fbbf24' },
 };
 const SOURCE_ORDER = Object.keys(SOURCE_META);
 
@@ -48,13 +49,15 @@ function orderedSources(bySource = {}) {
 }
 
 function sourceRows(bySource = {}, total = 0) {
+  // 按 token 数从大到小排（占比条 / 列表一致）
   return orderedSources(bySource)
     .map((source) => {
       const meta = metaForSource(source);
       const rec = bySource[source] || {};
       return { source, label: meta.label, color: meta.color, total: rec.total || 0, pct: pct(rec.total || 0, total) };
     })
-    .filter((row) => row.total > 0);
+    .filter((row) => row.total > 0)
+    .sort((a, b) => b.total - a.total);
 }
 
 function rgba(hex, alpha) {

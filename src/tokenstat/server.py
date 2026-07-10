@@ -229,6 +229,7 @@ class Handler(BaseHTTPRequestHandler):
             "opencode": _path_status(config.OPENCODE_DB_PATH),
             "openclaw": _path_status(config.OPENCLAW_SESSION_DIR),
             "hermes": _path_status(config.HERMES_STATE_DB),
+            "grok": _path_status(config.GROK_LOG_PATH),
         }
         self._send_json(data)
 

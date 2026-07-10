@@ -4,13 +4,15 @@
     "source_anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
     "source_openai": "https://developers.openai.com/api/docs/pricing",
     "source_deepseek": "https://api-docs.deepseek.com/quick_start/pricing",
+    "source_xai": "https://docs.x.ai/docs/models",
     "fetched_date": "2026-06-06",
-    "verified_date": "2026-07-01",
-    "note": "订阅制(Claude Max / Codex 套餐)下，token 不直接对应扣费。此处费用按公开 API 单价折算，仅供参考。codex-auto-review 与 gpt-5-codex 按 OpenAI Codex 专项 gpt-5.3-codex 价格估算。claude-sonnet-5 按标准价 $3/$15 登记，2026-08-31 前有 $2/$10 introductory 优惠未计入。"
+    "verified_date": "2026-07-09",
+    "note": "订阅制(Claude Max / Codex / Grok 套餐)下，token 不直接对应扣费。此处费用按公开 API 单价折算，仅供参考。codex-auto-review 与 gpt-5-codex 按 OpenAI Codex 专项 gpt-5.3-codex 价格估算。claude-sonnet-5 按标准价 $3/$15 登记，2026-08-31 前有 $2/$10 introductory 优惠未计入。Grok cache_read 官方未单列，按 input 的 10% 估算。"
   },
   "default": { "input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write_5m": 6.25, "cache_write_1h": 10.0 },
   "anthropic": {
     "claude-fable-5":    { "input": 10.0, "output": 50.0, "cache_read": 1.00, "cache_write_5m": 12.50, "cache_write_1h": 20.0 },
+    "claude-mythos-5":   { "input": 10.0, "output": 50.0, "cache_read": 1.00, "cache_write_5m": 12.50, "cache_write_1h": 20.0 },
     "claude-opus-4-8":   { "input": 5.0,  "output": 25.0, "cache_read": 0.50, "cache_write_5m": 6.25,  "cache_write_1h": 10.0 },
     "claude-opus-4-7":   { "input": 5.0,  "output": 25.0, "cache_read": 0.50, "cache_write_5m": 6.25,  "cache_write_1h": 10.0 },
     "claude-opus-4-6":   { "input": 5.0,  "output": 25.0, "cache_read": 0.50, "cache_write_5m": 6.25,  "cache_write_1h": 10.0 },
@@ -30,7 +32,17 @@
   "local": {
     "gemma4:26b":        { "input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write_5m": null, "cache_write_1h": null }
   },
+  "xai": {
+    "grok-4.5":                 { "input": 2.0,  "output": 6.0,  "cache_read": 0.20,  "cache_write_5m": null, "cache_write_1h": null },
+    "grok-4.3":                 { "input": 1.25, "output": 2.50, "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null },
+    "grok-4.20-0309-reasoning": { "input": 1.25, "output": 2.50, "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null },
+    "grok-4.20-0309-non-reasoning": { "input": 1.25, "output": 2.50, "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null },
+    "grok-build-0.1":           { "input": 1.0,  "output": 2.0,  "cache_read": 0.10,  "cache_write_5m": null, "cache_write_1h": null }
+  },
   "openai": {
+    "gpt-5.6-sol":       { "input": 5.0,  "output": 30.0,  "cache_read": 0.50,  "cache_write_5m": null, "cache_write_1h": null },
+    "gpt-5.6-terra":     { "input": 2.50, "output": 15.0,  "cache_read": 0.25,  "cache_write_5m": null, "cache_write_1h": null },
+    "gpt-5.6-luna":      { "input": 1.0,  "output": 6.0,   "cache_read": 0.10,  "cache_write_5m": null, "cache_write_1h": null },
     "gpt-5.5":           { "input": 5.0,  "output": 30.0,  "cache_read": 0.50,  "cache_write_5m": null, "cache_write_1h": null },
     "gpt-5.5-pro":       { "input": 30.0, "output": 180.0, "cache_read": null,  "cache_write_5m": null, "cache_write_1h": null },
     "gpt-5.4":           { "input": 2.50, "output": 15.0,  "cache_read": 0.25,  "cache_write_5m": null, "cache_write_1h": null },

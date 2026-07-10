@@ -24,7 +24,15 @@ SOURCE_CODEX = "codex"
 SOURCE_OPENCODE = "opencode"
 SOURCE_OPENCLAW = "openclaw"
 SOURCE_HERMES = "hermes"
-VALID_SOURCES = (SOURCE_CLAUDE, SOURCE_CODEX, SOURCE_OPENCODE, SOURCE_OPENCLAW, SOURCE_HERMES)
+SOURCE_GROK = "grok"
+VALID_SOURCES = (
+    SOURCE_CLAUDE,
+    SOURCE_CODEX,
+    SOURCE_OPENCODE,
+    SOURCE_OPENCLAW,
+    SOURCE_HERMES,
+    SOURCE_GROK,
+)
 
 CATEGORY_MAIN = "main"
 CATEGORY_SUBAGENT = "subagent"
@@ -52,7 +60,7 @@ class UsageRecord:
     """
 
     ts: int  # epoch 秒（UTC）
-    source: str  # "claude" | "codex" | "opencode" | "openclaw"
+    source: str  # "claude" | "codex" | "opencode" | "openclaw" | "hermes" | "grok"
     model: str
     project: str  # 完整 cwd 绝对路径（分组键）
     input_tokens: int = 0
