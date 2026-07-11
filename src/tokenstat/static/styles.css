@@ -169,7 +169,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .hero-foot { display: flex; align-items: baseline; gap: 10px; }
 .hero-cost { color: var(--muted); font-size: 14px; }
 .hero-cost strong { margin-left: 6px; color: var(--gold); font: 600 21px/1 var(--number-font); }
-.hero-sub { margin-bottom: 26px; color: var(--signal); font-size: 16px; }
+.hero-sub { margin-bottom: 26px; color: var(--signal); font-size: 14px; }
 .splitbar { display: flex; height: 4px; overflow: hidden; margin-bottom: 20px; background: var(--line-soft); }
 .splitbar span { transition: width .3s ease; }
 .split-legend { display: grid; gap: 2px; }
@@ -182,9 +182,9 @@ button, a { -webkit-tap-highlight-color: transparent; }
   border-bottom: 1px solid var(--line-soft);
 }
 .split-row .dot { width: 8px; height: 8px; border-radius: 50%; }
-.split-row .label { color: var(--muted); font-size: 18px; }
-.split-row .value { color: var(--paper); font: 600 17px/1 var(--number-font); }
-.split-row .pct { color: var(--dim); text-align: right; font: 500 15px/1 var(--number-font); }
+.split-row .label { color: var(--muted); font-size: 16px; }
+.split-row .value { color: var(--paper); font: 600 15px/1 var(--number-font); }
+.split-row .pct { color: var(--dim); text-align: right; font: 500 14px/1 var(--number-font); }
 
 /* Period summary ledger */
 .stats { display: grid; grid-template-columns: repeat(4,1fr); margin-bottom: 22px; border-bottom: 1px solid var(--line); }
