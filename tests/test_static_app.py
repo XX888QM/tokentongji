@@ -113,6 +113,16 @@ console.log(JSON.stringify(live));
         self.assertIn("fill: false", source)
         self.assertIn("borderWidth: 1.75", source)
 
+    def test_chart_tooltip_shows_total(self):
+        check = """
+console.log(chartTooltipTotal([
+  { parsed: { y: 52939008 } },
+  { parsed: { y: 5290439411 } },
+  { parsed: { y: 58004220 } }
+]));
+"""
+        self.assertEqual(self._run_js(check).strip(), "总计: 54.01亿 (5,401,382,639)")
+
     def test_period_and_modal_ux_contract(self):
         source = (Path(__file__).parents[1] / "src/tokenstat/static/app.js").read_text()
         self.assertIn("tokenstat_period", source)

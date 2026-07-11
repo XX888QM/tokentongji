@@ -173,6 +173,11 @@ function fmtCN(n) {
   return sign + v.toLocaleString('en-US');
 }
 
+const chartTooltipTotal = (items) => {
+  const total = items.reduce((sum, item) => sum + (Number(item.parsed.y) || 0), 0);
+  return `总计: ${fmtCN(total)} (${fmt(total)})`;
+};
+
 const numCell = (n) => `<td class="num" title="${fmt(n)}">${fmtCN(n)}</td>`;
 const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
 
@@ -310,11 +315,15 @@ async function loadDaily() {
           borderWidth: 1,
           titleColor: '#f1eee7',
           bodyColor: '#9b9a94',
+          footerColor: '#e6c77a',
           padding: 10,
           titleFont: { family: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif", size: 15 },
           bodyFont: { family: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif", size: 15 },
+          footerFont: { family: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif", size: 15, weight: '600' },
+          footerMarginTop: 8,
           callbacks: {
             label: (c) => `  ${c.dataset.label}: ${fmtCN(c.parsed.y)} (${fmt(c.parsed.y)})`,
+            footer: chartTooltipTotal,
           },
         },
       },
