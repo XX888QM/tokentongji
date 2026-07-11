@@ -93,6 +93,8 @@ const data = (id) => ({ session_id:id, summary:{}, groups:[], source_files:[] })
         self.assertIn("font-size: 14px; }\n\n/* Panels */", css)
         self.assertIn("font-size: 15px; }\n.kv span", css)
         self.assertIn(".insight-body { color: var(--muted); font-size: 15px", css)
+        self.assertIn(".hero-sub { margin-bottom: 26px; color: var(--signal); font-size: 16px; }", css)
+        self.assertIn(".split-row .label { color: var(--muted); font-size: 18px; }", css)
         self.assertIn("prefers-reduced-motion", css)
         self.assertNotIn("@media(max-width", css)
 
