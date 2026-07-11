@@ -76,6 +76,16 @@ const data = (id) => ({ session_id:id, summary:{}, groups:[], source_files:[] })
         self.assertIn('for="desktopNotify"', html)
         self.assertNotIn('name="viewport"', html)
 
+    def test_night_ledger_visual_contract(self):
+        css = (Path(__file__).parents[1] / "src/tokenstat/static/styles.css").read_text()
+        self.assertIn("--gold: #e6c77a", css)
+        self.assertIn("--signal: #78dce8", css)
+        self.assertIn("min-width: 1180px", css)
+        self.assertIn("Iowan Old Style", css)
+        self.assertIn("SFMono-Regular", css)
+        self.assertIn("prefers-reduced-motion", css)
+        self.assertNotIn("@media(max-width", css)
+
 
 if __name__ == "__main__":
     unittest.main()
