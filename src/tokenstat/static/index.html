@@ -2,7 +2,6 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Token 统计</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="/static/styles.css" />
@@ -19,27 +18,28 @@
 
   <!-- Header -->
   <header class="header">
-    <div class="header-left">
-      <div class="logo" aria-label="GPT">
-        <svg viewBox="0 0 64 64" role="img" aria-hidden="true">
-          <circle cx="32" cy="32" r="24"></circle>
-          <path d="M32 13.5c5.3 0 9.8 3.3 11.4 7.8 4.8.9 8.4 5.1 8.4 10.1 0 4.4-2.8 8.2-6.6 9.7-.7 5.2-5.1 9.1-10.4 9.1-2.8 0-5.3-1-7.2-2.8-4.8.9-9.7-1.7-11.7-6.2-1.7-4-.7-8.6 2.3-11.4-1.1-5.1 1.6-10.4 6.5-12.5 2.5-1 5.1-.9 7.3.2z"></path>
-          <path d="M25.1 19.9 32 24l6.9-4.1M32 24v8.1l-6.9 4M32 32.1l6.9 4M18.2 29.4l7 4M44.8 33.4l5-2.9M27.5 47.4v-8.3"></path>
-        </svg>
-      </div>
+    <div class="brand-lockup">
+      <span class="brand-code">TOKEN LEDGER / 06</span>
       <h1>Token 统计</h1>
     </div>
     <div class="header-right">
       <div class="header-meta">
-        <span class="live">在线</span>
-        <span id="meta" style="display:block">加载中…</span>
+        <span class="live" id="liveStatus" aria-live="polite">连接中</span>
+        <span id="meta">加载中…</span>
       </div>
-      <button class="btn-ghost" onclick="toggleSettings()">⚙ 告警设置</button>
+      <button class="btn-ghost" id="settingsButton" type="button" onclick="toggleSettings()">告警设置</button>
     </div>
   </header>
+  <nav class="section-nav" aria-label="页面区段">
+    <a href="#overview">总览</a>
+    <a href="#audit">审计</a>
+    <a href="#breakdown">明细</a>
+    <a href="#trend">趋势</a>
+    <a href="#sessions">会话</a>
+  </nav>
 
   <!-- Hero -->
-  <section class="hero">
+  <section class="hero" id="overview">
     <div class="hero-card">
       <div class="hero-label" id="heroRange">今日消耗</div>
       <div class="hero-number" id="heroTotal" title="">—</div>
@@ -58,9 +58,12 @@
   <section class="stats" id="stats"></section>
 
   <!-- Audit -->
-  <section class="panel">
+  <section class="panel" id="audit">
     <div class="panel-head">
-      <h2>运行审计</h2>
+      <div class="section-title">
+        <span class="section-index">01</span>
+        <div><span class="eyebrow">SYSTEM INTEGRITY</span><h2>运行审计</h2></div>
+      </div>
       <span class="status-pill" id="auditStatus">检查中</span>
     </div>
     <div class="audit-grid">
@@ -73,16 +76,22 @@
   <!-- Insights -->
   <section class="panel">
     <div class="panel-head">
-      <h2>异常洞察</h2>
+      <div class="section-title">
+        <span class="section-index">02</span>
+        <div><span class="eyebrow">ANOMALY SIGNALS</span><h2>异常洞察</h2></div>
+      </div>
       <span class="panel-note" id="insightDate">今日</span>
     </div>
     <div class="insight-cards" id="insightCards"></div>
   </section>
 
   <!-- Breakdown -->
-  <section class="panel">
+  <section class="panel" id="breakdown">
     <div class="panel-head">
-      <h2>拆分明细</h2>
+      <div class="section-title">
+        <span class="section-index">03</span>
+        <div><span class="eyebrow">COST BREAKDOWN</span><h2>拆分明细</h2></div>
+      </div>
       <div class="period-toggle" id="periodToggle">
         <button data-period="today" class="active">今日</button>
         <button data-period="week">近7天</button>
@@ -112,17 +121,25 @@
   </section>
 
   <!-- Chart -->
-  <section class="panel">
+  <section class="panel" id="trend">
     <div class="panel-head">
-      <h2>近 30 天消耗趋势</h2>
+      <div class="section-title">
+        <span class="section-index">04</span>
+        <div><span class="eyebrow">THIRTY DAY FLOW</span><h2>消耗趋势</h2></div>
+      </div>
       <div class="chart-legend" id="dailyLegend"></div>
     </div>
     <div class="chart-wrap"><canvas id="dailyChart"></canvas></div>
   </section>
 
   <!-- Top sessions -->
-  <section class="panel">
-    <div class="panel-head"><h2>TOP 10 最贵会话</h2></div>
+  <section class="panel" id="sessions">
+    <div class="panel-head">
+      <div class="section-title">
+        <span class="section-index">05</span>
+        <div><span class="eyebrow">SESSION LEDGER</span><h2>TOP 10 最贵会话</h2></div>
+      </div>
+    </div>
     <table id="topSessionsTable">
       <thead><tr><th class="num">#</th><th>日期</th><th>项目</th><th>模型</th><th>源</th><th class="num">Tokens</th><th class="num">费用</th></tr></thead>
       <tbody></tbody>
@@ -135,14 +152,15 @@
 
 <!-- Settings modal -->
 <div class="modal-overlay" id="settingsModal" style="display:none">
-  <div class="modal">
-    <h3>用量告警设置</h3>
-    <div class="modal-row"><label>今日费用超过 ¥</label><input type="number" id="alertCost" min="0" step="0.1" placeholder="不告警"></div>
-    <div class="modal-row"><label>今日 Token 超过（万）</label><input type="number" id="alertTokens" min="0" step="1" placeholder="不告警"></div>
-    <div class="modal-row"><label>启用桌面通知</label><input type="checkbox" id="desktopNotify"></div>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <span class="eyebrow">THRESHOLDS</span>
+    <h3 id="settingsTitle">用量告警设置</h3>
+    <div class="modal-row"><label for="alertCost">今日费用超过 ¥</label><input type="number" id="alertCost" min="0" step="0.1" placeholder="不告警"></div>
+    <div class="modal-row"><label for="alertTokens">今日 Token 超过（万）</label><input type="number" id="alertTokens" min="0" step="1" placeholder="不告警"></div>
+    <div class="modal-row"><label for="desktopNotify">启用桌面通知</label><input type="checkbox" id="desktopNotify"></div>
     <div class="modal-actions">
-      <button class="btn" onclick="toggleSettings()">取消</button>
-      <button class="btn primary" onclick="saveSettings()">保存</button>
+      <button class="btn" type="button" onclick="toggleSettings()">取消</button>
+      <button class="btn primary" type="button" onclick="saveSettings()">保存</button>
     </div>
   </div>
 </div>
