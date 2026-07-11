@@ -48,7 +48,7 @@ bash scripts/uninstall-launchd.sh
 - **`pricing.py` + `pricing.json`** — model 名归一化（剥离区域前缀/后缀）→ 精确匹配 → 最长前缀匹配 → 家族兜底（`_family_rates()`，同系列新版本未命中时退到该系列已知最新价）→ default。**新模型上线时**要同步改两处：`pricing.json` 加价目条目，以及对应 family 的 `_family_rates()` 里 `pick()` 参数顺序（最新版本放最前面），否则未来的新版本会退到旧价格而不是最新价格。未知 model 会被记录到 `_UNKNOWN_MODELS`（fail-loud，不静默按 0 计费）。分区含 `anthropic` / `openai` / `deepseek` / `xai` / `local`。
 - **`aggregate.py`** — 所有仪表盘用到的聚合都在这，一律按 `date_local`（Asia/Shanghai 本地日）分桶。`audit()` 同时检查最新来源距今天的绝对陈旧天数，以及单个来源落后最新来源的相对天数，避免全部采集一起停摆时假绿。
 - **`server.py`** — 单进程 `ThreadingHTTPServer`：主线程处理 HTTP 请求，后台 daemon 线程按 `TOKENSTAT_INGEST_INTERVAL` 定时增量 ingest。API 路由手写分发在 `do_GET`/`do_POST` 里，没有框架。`/api/notify` 仅接受本机请求 + 自定义 header + 白名单 kind，用于触发 osascript 桌面通知，改这块要留意命令注入面（当前对 message 做了转义 + 长度截断）。
-- **桌面视觉系统**：`static/` 采用 Night Ledger × Signal Room 方向。暖金只表示金额/核心总量，冷青表示运行状态；标题、正文、数字分别使用本机衬线/无衬线/等宽回退链。页面最小宽度 1180px，不添加 viewport、移动端媒体查询或外部字体依赖。顶部区段导航、周期记忆、健康状态联动和设置弹窗键盘操作属于既定用户体验，不要在样式重构时删掉。
+- **桌面视觉系统**：`static/` 采用 Night Ledger × Signal Room 方向。暖金只表示金额/核心总量，冷青表示运行状态；标题、正文和数字统一使用系统字体（macOS 苹方优先），正文基准字号 15px，数字仅用 `tabular-nums` 对齐。页面最小宽度 1180px，不添加 viewport、移动端媒体查询或外部字体依赖。顶部区段导航、周期记忆、健康状态联动和设置弹窗键盘操作属于既定用户体验，不要在样式重构时删掉。
 
 ## 关键约定
 

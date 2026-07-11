@@ -311,16 +311,16 @@ async function loadDaily() {
           titleColor: '#f1eee7',
           bodyColor: '#9b9a94',
           padding: 10,
-          titleFont: { family: "'SFMono-Regular', Menlo, monospace" },
-          bodyFont: { family: "'Avenir Next', 'PingFang SC', sans-serif" },
+          titleFont: { family: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif", size: 13 },
+          bodyFont: { family: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif", size: 13 },
           callbacks: {
             label: (c) => `  ${c.dataset.label}: ${fmtCN(c.parsed.y)} (${fmt(c.parsed.y)})`,
           },
         },
       },
       scales: {
-        x: { grid: { color: 'rgba(241,238,231,0.055)' }, ticks: { color: '#646660', font: { family: "'SFMono-Regular', Menlo, monospace", size: 10 }, maxTicksLimit: 12 } },
-        y: { grid: { color: 'rgba(241,238,231,0.055)' }, ticks: { color: '#646660', font: { family: "'SFMono-Regular', Menlo, monospace", size: 10 }, callback: (v) => fmtCN(v) } },
+        x: { grid: { color: 'rgba(241,238,231,0.055)' }, ticks: { color: '#646660', font: { family: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif", size: 12 }, maxTicksLimit: 12 } },
+        y: { grid: { color: 'rgba(241,238,231,0.055)' }, ticks: { color: '#646660', font: { family: "-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif", size: 12 }, callback: (v) => fmtCN(v) } },
       },
     },
   };
