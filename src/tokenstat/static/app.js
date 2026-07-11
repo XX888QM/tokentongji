@@ -23,18 +23,22 @@ let CNY_RATE = 7.25;
 // 请求序号：防止慢响应覆盖新响应（切周期/定时刷新时的竞态）
 let breakdownSeq = 0;
 let topSessionsSeq = 0;
+let sessionDetailSeq = 0;
 // 「按项目」分页：页大小跟随「按模型」行数，使两表合计行水平对齐
 let projectRows = [];
 let projectPage = 0;
 let projectPageSize = 8;
+let settingsReturnFocus = null;
+
+const VALID_PERIODS = new Set(['today', 'week', 'month', 'all']);
 
 const SOURCE_META = {
-  claude:   { label: 'Claude',   color: '#f97316' },
-  codex:    { label: 'Codex',    color: '#22c55e' },
-  opencode: { label: 'Opencode', color: '#a78bfa' },
-  openclaw: { label: 'Openclaw', color: '#d67cf2' },
-  hermes:   { label: 'Hermes',   color: '#38bdf8' },
-  grok:     { label: 'Grok',     color: '#fbbf24' },
+  claude:   { label: 'Claude',   color: '#ed8d5a' },
+  codex:    { label: 'Codex',    color: '#78c991' },
+  opencode: { label: 'Opencode', color: '#a99be5' },
+  openclaw: { label: 'Openclaw', color: '#d58acb' },
+  hermes:   { label: 'Hermes',   color: '#69c7dc' },
+  grok:     { label: 'Grok',     color: '#e2bb62' },
 };
 const SOURCE_ORDER = Object.keys(SOURCE_META);
 
@@ -79,30 +83,38 @@ function saveSettings() {
     desktop_notify: document.getElementById('desktopNotify').checked,
   };
   localStorage.setItem('tokenstat_alert', JSON.stringify(cfg));
-  toggleSettings();
+  closeSettings();
   refreshAll();
+}
+function closeSettings() {
+  document.getElementById('settingsModal').style.display = 'none';
+  settingsReturnFocus?.focus();
 }
 function toggleSettings() {
   const m = document.getElementById('settingsModal');
   const isOpen = m.style.display !== 'none';
-  if (!isOpen) {
-    const cfg = loadAlertConfig();
-    document.getElementById('alertCost').value = cfg.daily_cost || '';
-    document.getElementById('alertTokens').value = cfg.daily_tokens ? cfg.daily_tokens / 1e4 : '';
-    document.getElementById('desktopNotify').checked = !!cfg.desktop_notify;
+  if (isOpen) {
+    closeSettings();
+    return;
   }
-  m.style.display = isOpen ? 'none' : 'flex';
+  const cfg = loadAlertConfig();
+  settingsReturnFocus = document.getElementById('settingsButton');
+  document.getElementById('alertCost').value = cfg.daily_cost || '';
+  document.getElementById('alertTokens').value = cfg.daily_tokens ? cfg.daily_tokens / 1e4 : '';
+  document.getElementById('desktopNotify').checked = !!cfg.desktop_notify;
+  m.style.display = 'flex';
+  document.getElementById('alertCost').focus();
 }
 function dismissAlert() {
-  sessionStorage.setItem('tokenstat_alert_dismissed', '1');
+  sessionStorage.setItem('tokenstat_alert_dismissed_' + localDateKey(), '1');
   document.getElementById('alertBar').style.display = 'none';
 }
 function checkAlert(todayData) {
-  if (sessionStorage.getItem('tokenstat_alert_dismissed')) return;
+  if (sessionStorage.getItem('tokenstat_alert_dismissed_' + localDateKey())) return;
   const cfg = loadAlertConfig();
   const msgs = [];
   if (cfg.daily_cost > 0 && todayData.cost_usd * CNY_RATE >= cfg.daily_cost)
-    msgs.push(`今日费用 ${fmtCost(todayData.cost_usd)} 已达告警阈值 ¥${(cfg.daily_cost).toFixed(2)}`);
+    msgs.push(`今日费用 ${fmtCost(todayData.cost_usd)} 已达告警阈值 ${fmtYuan(cfg.daily_cost)}`);
   if (cfg.daily_tokens > 0 && todayData.total >= cfg.daily_tokens)
     msgs.push(`今日 Token ${fmtCN(todayData.total)} 已达告警阈值 ${fmtCN(cfg.daily_tokens)}`);
   const bar = document.getElementById('alertBar');
@@ -117,8 +129,17 @@ function checkAlert(todayData) {
 }
 let refreshTimer = null;
 
+function localDateKey(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 const fmt = (n) => (n == null ? '0' : Number(n).toLocaleString('en-US'));
-const fmtCost = (n) => '¥' + ((Number(n) || 0) * CNY_RATE).toFixed(2);
+const fmtYuan = (yuan) => '¥' + (Math.abs(Number(yuan) || 0) >= 1e4 ? fmtCN(yuan) : (Number(yuan) || 0).toFixed(2));
+const fmtCost = (n) => fmtYuan((Number(n) || 0) * CNY_RATE);
 
 function stripZeros(s) {
   return s.replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
@@ -175,7 +196,7 @@ async function maybeNotifyAlert(message) {
   const cfg = loadAlertConfig();
   if (!cfg.desktop_notify) return;
   // 按「日期」去重：message 内嵌实时金额，若含金额则每次刷新键都变会重复弹窗
-  const key = 'tokenstat_notify_' + new Date().toISOString().slice(0, 10);
+  const key = 'tokenstat_notify_' + localDateKey();
   if (sessionStorage.getItem(key)) return;
   sessionStorage.setItem(key, '1');
   try {
@@ -258,18 +279,16 @@ async function loadDaily() {
   }
   const datasets = chartSources.map((source) => {
     const meta = metaForSource(source);
-    const gradient = ctx.createLinearGradient(0, 0, 0, 260);
-    gradient.addColorStop(0, rgba(meta.color, 0.18));
-    gradient.addColorStop(1, rgba(meta.color, 0));
     return {
       label: meta.label,
       data: d.days.map((x) => x[source] || 0),
       borderColor: meta.color,
-      backgroundColor: gradient,
-      fill: true,
-      tension: 0.35,
+      backgroundColor: rgba(meta.color, 0.08),
+      fill: false,
+      tension: 0.28,
       pointRadius: 0,
-      borderWidth: 2,
+      pointHoverRadius: 3,
+      borderWidth: 1.75,
     };
   });
 
@@ -286,22 +305,22 @@ async function loadDaily() {
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#141618',
-          borderColor: '#1e2024',
+          backgroundColor: '#0d0f10',
+          borderColor: '#272827',
           borderWidth: 1,
-          titleColor: '#ededef',
-          bodyColor: '#9b9ba0',
+          titleColor: '#f1eee7',
+          bodyColor: '#9b9a94',
           padding: 10,
-          titleFont: { family: "Inter, 'PingFang SC', sans-serif" },
-          bodyFont: { family: "Inter, 'PingFang SC', sans-serif" },
+          titleFont: { family: "'SFMono-Regular', Menlo, monospace" },
+          bodyFont: { family: "'Avenir Next', 'PingFang SC', sans-serif" },
           callbacks: {
             label: (c) => `  ${c.dataset.label}: ${fmtCN(c.parsed.y)} (${fmt(c.parsed.y)})`,
           },
         },
       },
       scales: {
-        x: { grid: { color: 'rgba(30,32,36,0.8)' }, ticks: { color: '#5f6065', font: { family: "Inter, 'PingFang SC', sans-serif", size: 12 }, maxTicksLimit: 12 } },
-        y: { grid: { color: 'rgba(30,32,36,0.8)' }, ticks: { color: '#5f6065', font: { family: "Inter, 'PingFang SC', sans-serif", size: 12 }, callback: (v) => fmtCN(v) } },
+        x: { grid: { color: 'rgba(241,238,231,0.055)' }, ticks: { color: '#646660', font: { family: "'SFMono-Regular', Menlo, monospace", size: 10 }, maxTicksLimit: 12 } },
+        y: { grid: { color: 'rgba(241,238,231,0.055)' }, ticks: { color: '#646660', font: { family: "'SFMono-Regular', Menlo, monospace", size: 10 }, callback: (v) => fmtCN(v) } },
       },
     },
   };
@@ -331,8 +350,17 @@ function issueBadge(issue) {
   return `<div class="issue ${level}">${esc(issue.message || issue)}</div>`;
 }
 
+function setHeaderHealth(status) {
+  const live = document.getElementById('liveStatus');
+  if (!live) return;
+  const warn = status !== 'ok';
+  live.textContent = warn ? '需关注' : '运行正常';
+  live.className = 'live ' + (warn ? 'warn' : 'ok');
+}
+
 async function loadAudit() {
   const a = await getJSON('/api/audit');
+  setHeaderHealth(a.status);
   const status = document.getElementById('auditStatus');
   status.textContent = a.status === 'ok' ? '正常' : '需关注';
   status.className = 'status-pill ' + (a.status || 'ok');
@@ -384,11 +412,13 @@ async function loadTopSessions() {
 }
 
 async function loadSessionDetail(sessionId) {
+  const my = ++sessionDetailSeq;
   const target = document.getElementById('sessionDetail');
   target.hidden = false;
   target.innerHTML = '<div class="empty">加载会话明细中…</div>';
   try {
     const d = await getJSON(`/api/session_detail?period=${currentPeriod}&session_id=${encodeURIComponent(sessionId)}`);
+    if (my !== sessionDetailSeq) return;
     const summary = d.summary || {};
     const groupRows = (d.groups || []).map((g) => `
       <tr>
@@ -429,10 +459,12 @@ async function loadSessionDetail(sessionId) {
         </div>
       </div>`;
     document.getElementById('closeSessionDetail').addEventListener('click', () => {
+      sessionDetailSeq++;
       target.hidden = true;
       target.innerHTML = '';
     });
   } catch (e) {
+    if (my !== sessionDetailSeq) return;
     target.innerHTML = `<div class="issue warn">会话明细加载失败：${esc(e.message)}</div>`;
   }
 }
@@ -518,17 +550,39 @@ async function refreshAll() {
 }
 
 function setupPeriodToggle() {
+  const saved = sessionStorage.getItem('tokenstat_period');
+  if (VALID_PERIODS.has(saved)) currentPeriod = saved;
+  renderPeriodState();
   document.getElementById('periodToggle').addEventListener('click', (e) => {
     const btn = e.target.closest('button');
-    if (!btn) return;
-    document.querySelectorAll('#periodToggle button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
+    if (!btn || !VALID_PERIODS.has(btn.dataset.period)) return;
     currentPeriod = btn.dataset.period;
+    sessionStorage.setItem('tokenstat_period', currentPeriod);
+    renderPeriodState();
     projectPage = 0;  // 切周期回到第 1 页（定时刷新不重置，避免打断翻页浏览）
     loadBreakdown();
     loadTopSessions();
+    sessionDetailSeq++;
     document.getElementById('sessionDetail').hidden = true;
     document.getElementById('sessionDetail').innerHTML = '';
+  });
+}
+
+function renderPeriodState() {
+  document.querySelectorAll('#periodToggle button').forEach((button) => {
+    const active = button.dataset.period === currentPeriod;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+}
+
+function setupSettingsInteractions() {
+  const modal = document.getElementById('settingsModal');
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeSettings();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display !== 'none') closeSettings();
   });
 }
 
@@ -550,6 +604,7 @@ async function loadRates() {
 async function main() {
   setupPeriodToggle();
   setupTopSessionDrilldown();
+  setupSettingsInteractions();
   await loadRates();
   const sec = await refreshAll();
   if (refreshTimer) clearInterval(refreshTimer);

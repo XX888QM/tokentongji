@@ -86,6 +86,30 @@ const data = (id) => ({ session_id:id, summary:{}, groups:[], source_files:[] })
         self.assertIn("prefers-reduced-motion", css)
         self.assertNotIn("@media(max-width", css)
 
+    def test_header_health_reflects_audit_status(self):
+        check = """
+const live = { textContent:'', className:'' };
+global.document = { getElementById(id) { return id === 'liveStatus' ? live : {}; } };
+setHeaderHealth('warn');
+console.log(JSON.stringify(live));
+"""
+        self.assertEqual(
+            json.loads(self._run_js(check)),
+            {"textContent": "需关注", "className": "live warn"},
+        )
+
+    def test_chart_is_line_only(self):
+        source = (Path(__file__).parents[1] / "src/tokenstat/static/app.js").read_text()
+        self.assertIn("fill: false", source)
+        self.assertIn("borderWidth: 1.75", source)
+
+    def test_period_and_modal_ux_contract(self):
+        source = (Path(__file__).parents[1] / "src/tokenstat/static/app.js").read_text()
+        self.assertIn("tokenstat_period", source)
+        self.assertIn("aria-pressed", source)
+        self.assertIn("e.key === 'Escape'", source)
+        self.assertIn("settingsButton", source)
+
 
 if __name__ == "__main__":
     unittest.main()
