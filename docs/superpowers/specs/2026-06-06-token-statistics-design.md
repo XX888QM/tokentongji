@@ -1,5 +1,7 @@
 # Token 统计仪表盘 — 设计文档
 
+> **历史文档（2026-06-06）**：记录项目最初只支持 Claude/Codex 时的设计，不代表当前六来源实现与使用方法。当前真值请看仓库根目录 `README.md`、`CLAUDE.md` 和代码测试。
+
 日期：2026-06-06
 作者：yunxin（大哥）+ Claude Code
 
@@ -151,5 +153,5 @@ tests/  (claude/codex 解析、ingest 幂等、aggregate、pricing；目标 80%+
 | 去重键 | (source_file,line_no) | Claude=message.id（on_conflict=max）；Codex=`file#offset`（ignore） |
 | 单价 | 简单 models{} | 嵌套 anthropic/openai + cache_write_5m/1h；归一化 strip 前后缀 + 家族匹配；未知 fail-loud |
 
-**验收对账（独立脚本重算 vs DB）**：Claude 845,686,049 == 845,686,049（0.000%）；
-Codex 5,853,700,062 == 5,853,700,062（0.000%）。52 个单元测试全过。
+**当时的验收快照（仅对应 2026-06-06 数据集）**：独立脚本重算与 DB 对账时，Claude 为
+845,686,049，Codex 为 5,853,700,062；当时的 52 个单元测试全部通过。当前行为与测试数量以 README 和现有测试套件为准。

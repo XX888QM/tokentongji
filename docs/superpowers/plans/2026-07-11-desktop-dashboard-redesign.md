@@ -1,5 +1,7 @@
 # Desktop Dashboard Redesign Implementation Plan
 
+> **已完成的历史实施计划**：复选框保留当时的执行模板格式，不代表当前仍有待办。当前行为与维护规则以 `README.md`、`CLAUDE.md` 和测试为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 将 Token 统计仪表盘重做为 Night Ledger × Signal Room 桌面数据工作台，同时保留现有 API、DOM 数据绑定和所有交互。
