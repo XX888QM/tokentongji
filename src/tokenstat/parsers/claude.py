@@ -2,8 +2,8 @@
 
 契约（recon 实测）：
 - 只认 type=="assistant" 且 message.usage 是 dict 的记录。
-- 去重键 = message.id（全局唯一）；同一 message 拆成 thinking/text/tool_use
-  多行、usage 重复，靠 DB 按 dedup_key=message.id 去重（取 output 最大）防 2.6~3x 高估。
+- 普通消息去重键 = message.id；同一 message 的流式多行由 DB 采用 total 更大的完整快照。
+- fallback/retry 的 usage.iterations 按真实模型拆成多条，不能只统计顶层最终模型。
 - 跳过 model=="<synthetic>"（本地合成、usage 全 0、无 requestId）。
 - project = 顶层 cwd 绝对路径（不是 message 内、不是目录名）。
 - category：observer(cwd 含 .claude-mem/observer-sessions) / subagent(isSidechain 或
@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Optional
 
 from ..models import (
@@ -91,3 +92,34 @@ def parse_record(obj: dict, source_file: str, pos: int) -> Optional[UsageRecord]
         category=category,
         dedup_key=msg_id,
     )
+
+
+def parse_records(obj: dict, source_file: str, pos: int) -> list[UsageRecord]:
+    """解析单行；fallback/retry 的每次 iteration 各保留一条真实模型用量。"""
+    base = parse_record(obj, source_file, pos)
+    if base is None:
+        return []
+    usage = obj["message"]["usage"]
+    iterations = usage.get("iterations")
+    if not isinstance(iterations, list) or len(iterations) <= 1:
+        return [base]
+
+    records = []
+    for index, item in enumerate(iterations):
+        if not isinstance(item, dict):
+            continue
+        input_tokens = int(item.get("input_tokens", 0) or 0)
+        output_tokens = int(item.get("output_tokens", 0) or 0)
+        cache_creation = int(item.get("cache_creation_input_tokens", 0) or 0)
+        cache_read = int(item.get("cache_read_input_tokens", 0) or 0)
+        records.append(replace(
+            base,
+            model=item.get("model") or base.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_creation_tokens=cache_creation,
+            cache_read_tokens=cache_read,
+            total_tokens=input_tokens + output_tokens + cache_creation + cache_read,
+            dedup_key=f"{base.dedup_key}:iteration:{index}",
+        ))
+    return records or [base]

@@ -74,6 +74,14 @@ class TestGrokParser(unittest.TestCase):
         self.assertEqual(r.model, "grok-4.5")
         self.assertEqual(r.project, "grok")
 
+    def test_usage_event_can_supply_model_and_project(self):
+        state = grok.GrokState()
+        event = _inference_done()
+        event["ctx"].update({"model": "grok-4.3", "cwd": "claude-mem"})
+        r = grok.process_record(event, "/u.jsonl", 0, state)
+        self.assertEqual(r.model, "grok-4.3")
+        self.assertEqual(r.project, "claude-mem")
+
     def test_skip_non_usage_and_zero(self):
         state = grok.GrokState()
         self.assertIsNone(

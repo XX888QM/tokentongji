@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tokenstat import db, ingest
+from tokenstat.models import UsageRecord
 
 
 def _w(path: Path, objs, mode="ab"):
@@ -109,6 +110,98 @@ class TestClaudeIngest(unittest.TestCase):
             fh.write(b"\n")
         ingest._ingest_file(self.conn, f, "claude", "gpt-5.5")
         self.assertEqual(self._rows(), (2, 30))
+
+    def test_iterations_are_ingested_without_top_level_double_count(self):
+        f = Path(self.tmp.name) / "fallback.jsonl"
+        obj = _assistant("fallback", 90, model="claude-opus-4-8")
+        obj["message"]["usage"]["iterations"] = [
+            {"model": "claude-fable-5", "input_tokens": 2, "output_tokens": 40,
+             "cache_creation_input_tokens": 10, "cache_read_input_tokens": 100},
+            {"model": "claude-opus-4-8", "input_tokens": 3, "output_tokens": 90,
+             "cache_creation_input_tokens": 20, "cache_read_input_tokens": 200},
+        ]
+        _w(f, [obj])
+        ingest._ingest_file(self.conn, f, "claude", "gpt-5.5")
+        rows = self.conn.execute(
+            "SELECT model, total_tokens FROM usage_events ORDER BY dedup_key"
+        ).fetchall()
+        self.assertEqual([(r["model"], r["total_tokens"]) for r in rows], [
+            ("claude-fable-5", 152),
+            ("claude-opus-4-8", 313),
+        ])
+
+    def test_fallback_removes_larger_temporary_top_level_row(self):
+        f = Path(self.tmp.name) / "fallback-stream.jsonl"
+        temporary = _assistant("fallback", 200, model="claude-fable-5")
+        final = _assistant("fallback", 100, model="claude-opus-4-8")
+        final["message"]["usage"]["iterations"] = [
+            {"model": "claude-fable-5", "input_tokens": 0, "output_tokens": 210,
+             "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+            {"model": "claude-opus-4-8", "input_tokens": 0, "output_tokens": 100,
+             "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+        ]
+        _w(f, [temporary, final])
+        ingest._ingest_file(self.conn, f, "claude", "gpt-5.5")
+        rows = self.conn.execute(
+            "SELECT dedup_key, model, total_tokens FROM usage_events ORDER BY dedup_key"
+        ).fetchall()
+        self.assertEqual([tuple(r) for r in rows], [
+            ("fallback:iteration:0", "claude-fable-5", 210),
+            ("fallback:iteration:1", "claude-opus-4-8", 100),
+        ])
+
+
+class TestDbUpserts(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.get_conn(":memory:")
+        db.init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_max_keeps_one_coherent_larger_snapshot(self):
+        older = UsageRecord(ts=1, source="claude", model="old", project="/p",
+                            input_tokens=10, output_tokens=100, total_tokens=110,
+                            dedup_key="same")
+        newer = UsageRecord(ts=2, source="claude", model="new", project="/p",
+                            input_tokens=20, output_tokens=95, total_tokens=115,
+                            dedup_key="same")
+        db.insert_records(self.conn, [older], on_conflict="max")
+        db.insert_records(self.conn, [newer], on_conflict="max")
+        row = self.conn.execute(
+            "SELECT ts, model, input_tokens, output_tokens, total_tokens FROM usage_events"
+        ).fetchone()
+        self.assertEqual(tuple(row), (2, "new", 20, 95, 115))
+
+    def test_replace_updates_lower_value_and_ignores_unchanged_row(self):
+        wrong = UsageRecord(ts=1, source="hermes", model="m", project="/p",
+                            output_tokens=70, total_tokens=70, dedup_key="hermes:s")
+        correct = UsageRecord(ts=1, source="hermes", model="m", project="/p",
+                              output_tokens=50, reasoning_tokens=20, total_tokens=50,
+                              dedup_key="hermes:s")
+        self.assertEqual(db.insert_records(self.conn, [wrong], on_conflict="replace"), 1)
+        self.assertEqual(db.insert_records(self.conn, [correct], on_conflict="replace"), 1)
+        self.assertEqual(db.insert_records(self.conn, [correct], on_conflict="replace"), 0)
+        row = self.conn.execute(
+            "SELECT output_tokens, reasoning_tokens, total_tokens FROM usage_events"
+        ).fetchone()
+        self.assertEqual(tuple(row), (50, 20, 50))
+
+    def test_openclaw_cross_format_duplicate_is_deleted(self):
+        common = dict(ts=100, source="openclaw", model="gpt-5.4", project="/p",
+                      input_tokens=10, output_tokens=5, cache_read_tokens=20,
+                      total_tokens=35, session_id="s")
+        db.insert_records(self.conn, [
+            UsageRecord(**common, source_file="/tmp/s.trajectory.jsonl", dedup_key="trajectory"),
+            UsageRecord(**common, source_file="/tmp/s.jsonl", dedup_key="v3"),
+            UsageRecord(**{**common, "ts": 101, "total_tokens": 36},
+                        source_file="/tmp/s.trajectory.jsonl", dedup_key="unique"),
+        ])
+        self.assertEqual(db.delete_openclaw_cross_format_duplicates(self.conn), 1)
+        keys = [r[0] for r in self.conn.execute(
+            "SELECT dedup_key FROM usage_events ORDER BY dedup_key"
+        )]
+        self.assertEqual(keys, ["unique", "v3"])
 
 
 class TestCodexIngest(unittest.TestCase):
@@ -318,12 +411,14 @@ class TestHermesIngest(unittest.TestCase):
         with patch("tokenstat.ingest.config.HERMES_STATE_DB", self.db_path):
             self._upsert(id="s1", model="gpt-5.5", cwd="/p", started_at=1700000000,
                          input_tokens=100, output_tokens=50)
-            ingest._ingest_hermes(self.conn)
+            self.assertEqual(ingest._ingest_hermes(self.conn), 1)
             self.assertEqual(self._sum(), (1, 100, 50))
+
+            self.assertEqual(ingest._ingest_hermes(self.conn), 0)
 
             self._upsert(id="s1", model="gpt-5.5", cwd="/p", started_at=1700000000,
                          input_tokens=300, output_tokens=120)  # 同一会话继续增长
-            ingest._ingest_hermes(self.conn)
+            self.assertEqual(ingest._ingest_hermes(self.conn), 1)
             self.assertEqual(self._sum(), (1, 300, 120))  # 仍 1 行，取最新值，不是叠加
 
     def test_missing_db_returns_zero(self):

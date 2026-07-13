@@ -70,6 +70,34 @@ class TestClaudeParser(unittest.TestCase):
         )
         self.assertEqual(rec.category, "subagent")
 
+    def test_fallback_iterations_are_separate_model_records(self):
+        obj = _assistant("fallback", "/proj", model="claude-opus-4-8", out=90)
+        obj["message"]["usage"]["iterations"] = [
+            {
+                "model": "claude-fable-5",
+                "input_tokens": 2,
+                "output_tokens": 40,
+                "cache_creation_input_tokens": 10,
+                "cache_read_input_tokens": 100,
+            },
+            {
+                "model": "claude-opus-4-8",
+                "input_tokens": 3,
+                "output_tokens": 90,
+                "cache_creation_input_tokens": 20,
+                "cache_read_input_tokens": 200,
+            },
+        ]
+
+        recs = claude.parse_records(obj, "/f.jsonl", 0)
+
+        self.assertEqual([r.model for r in recs], ["claude-fable-5", "claude-opus-4-8"])
+        self.assertEqual([r.total_tokens for r in recs], [152, 313])
+        self.assertEqual(
+            [r.dedup_key for r in recs],
+            ["fallback:iteration:0", "fallback:iteration:1"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

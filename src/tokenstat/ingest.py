@@ -68,7 +68,7 @@ def _should_read(state: dict | None, inode: int, size: int, mtime: float):
 
 
 def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
-    """增量解析单个文件，返回新增记录数。"""
+    """增量解析单个文件，返回新增或更新记录数。"""
     try:
         st = path.stat()
     except OSError:
@@ -89,6 +89,7 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
     )
 
     recs = []
+    legacy_claude_keys = set()
     consumed = start_offset
     pos = start_offset
 
@@ -108,7 +109,11 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
                 except (json.JSONDecodeError, ValueError):
                     continue
                 if source == SOURCE_CLAUDE:
-                    rec = claude_parser.parse_record(obj, source_file, line_start)
+                    parsed = claude_parser.parse_records(obj, source_file, line_start)
+                    if len(parsed) > 1:
+                        legacy_claude_keys.add(obj["message"]["id"])
+                    recs.extend(parsed)
+                    continue
                 elif source == SOURCE_CODEX:
                     rec = codex_parser.process_record(obj, source_file, line_start, cstate)
                 else:
@@ -119,6 +124,9 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
         return 0
 
     added = 0
+    if legacy_claude_keys:
+        recs = [r for r in recs if r.dedup_key not in legacy_claude_keys]
+        db.delete_dedup_keys(conn, SOURCE_CLAUDE, legacy_claude_keys)
     if recs:
         on_conflict = "max" if source == SOURCE_CLAUDE else "ignore"
         added += db.insert_records(conn, recs, on_conflict=on_conflict)
@@ -173,7 +181,7 @@ def _ingest_hermes(conn) -> int:
     records = hermes_parser.fetch_records(db_path)
     if not records:
         return 0
-    return db.insert_records(conn, records, on_conflict="max")
+    return db.insert_records(conn, records, on_conflict="replace")
 
 
 def _ingest_grok(conn) -> int:
@@ -313,6 +321,7 @@ def run_once() -> dict:
         for path in openclaw_v3_files():
             records_added += _ingest_openclaw_v3_file(conn, path)
             files_scanned += 1
+        db.delete_openclaw_cross_format_duplicates(conn)
         if config.GROK_LOG_PATH.is_file():
             records_added += _ingest_grok(conn)
             files_scanned += 1

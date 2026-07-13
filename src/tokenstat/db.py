@@ -4,9 +4,9 @@
 - WAL 模式，后台 ingest 线程写、Web 线程并发读。
 - 每次操作开独立连接（sqlite 连接很轻），规避跨线程共享坑。
 - usage_events 以 dedup_key 唯一去重：
-    * Claude：dedup_key = message.id（同一 message 拆多行，去重防 2.6~3x 高估）
+    * Claude：普通消息按 message.id 去重；fallback iterations 使用派生键
     * Codex：dedup_key = f"{file}#{offset}"（每个 token_count 事件差分出一条）
-  Claude 用 on_conflict='max' 取 output 最大代表条；Codex 用 'ignore' 幂等。
+  Claude 用 on_conflict='max' 取 total 更大的完整快照；Codex 用 'ignore' 幂等。
 - ingest_state 存断点(offset/inode/size) + Codex carry-forward 上下文(ctx)。
 """
 
@@ -101,14 +101,53 @@ _COLS = (
 )
 _PLACEHOLDERS = ",".join(["?"] * 16)
 
-# Claude 旧流式格式：同 message.id 多行 output 递增，取最大那条
+# Claude 旧流式格式：同 message.id 多行递增，整体采用 total 更大的完整快照。
 _ON_CONFLICT_MAX = """
 ON CONFLICT(dedup_key) DO UPDATE SET
-    output_tokens         = MAX(usage_events.output_tokens,         excluded.output_tokens),
-    input_tokens          = MAX(usage_events.input_tokens,          excluded.input_tokens),
-    cache_creation_tokens = MAX(usage_events.cache_creation_tokens, excluded.cache_creation_tokens),
-    cache_read_tokens     = MAX(usage_events.cache_read_tokens,     excluded.cache_read_tokens),
-    total_tokens          = MAX(usage_events.total_tokens,          excluded.total_tokens)
+    ts                    = excluded.ts,
+    date_local            = excluded.date_local,
+    model                 = excluded.model,
+    project               = excluded.project,
+    category              = excluded.category,
+    input_tokens          = excluded.input_tokens,
+    output_tokens         = excluded.output_tokens,
+    cache_read_tokens     = excluded.cache_read_tokens,
+    cache_creation_tokens = excluded.cache_creation_tokens,
+    reasoning_tokens      = excluded.reasoning_tokens,
+    total_tokens          = excluded.total_tokens,
+    session_id            = excluded.session_id,
+    source_file           = excluded.source_file,
+    pos                   = excluded.pos
+WHERE excluded.total_tokens > usage_events.total_tokens
+"""
+
+_ON_CONFLICT_REPLACE = """
+ON CONFLICT(dedup_key) DO UPDATE SET
+    ts                    = excluded.ts,
+    date_local            = excluded.date_local,
+    model                 = excluded.model,
+    project               = excluded.project,
+    category              = excluded.category,
+    input_tokens          = excluded.input_tokens,
+    output_tokens         = excluded.output_tokens,
+    cache_read_tokens     = excluded.cache_read_tokens,
+    cache_creation_tokens = excluded.cache_creation_tokens,
+    reasoning_tokens      = excluded.reasoning_tokens,
+    total_tokens          = excluded.total_tokens,
+    session_id            = excluded.session_id,
+    source_file           = excluded.source_file,
+    pos                   = excluded.pos
+WHERE excluded.ts != usage_events.ts
+   OR excluded.model != usage_events.model
+   OR excluded.project != usage_events.project
+   OR excluded.category != usage_events.category
+   OR excluded.input_tokens != usage_events.input_tokens
+   OR excluded.output_tokens != usage_events.output_tokens
+   OR excluded.cache_read_tokens != usage_events.cache_read_tokens
+   OR excluded.cache_creation_tokens != usage_events.cache_creation_tokens
+   OR excluded.reasoning_tokens != usage_events.reasoning_tokens
+   OR excluded.total_tokens != usage_events.total_tokens
+   OR excluded.session_id != usage_events.session_id
 """
 
 
@@ -117,9 +156,9 @@ def insert_records(
     records: Iterable[UsageRecord],
     on_conflict: str = "ignore",
 ) -> int:
-    """批量写入，按 dedup_key 去重幂等。返回实际新增行数。
+    """批量写入，按 dedup_key 去重幂等。返回实际新增或更新行数。
 
-    on_conflict: 'ignore'（默认，Codex）| 'max'（Claude，取 output 最大）。
+    on_conflict: 'ignore'（默认）| 'max'（Claude，取完整大快照）| 'replace'（Hermes 累计行）。
     """
     rows: Sequence[tuple] = [_row_tuple(r) for r in records]
     if not rows:
@@ -129,12 +168,59 @@ def insert_records(
             f"INSERT INTO usage_events ({_COLS}) VALUES ({_PLACEHOLDERS}) "
             + _ON_CONFLICT_MAX
         )
+    elif on_conflict == "replace":
+        sql = (
+            f"INSERT INTO usage_events ({_COLS}) VALUES ({_PLACEHOLDERS}) "
+            + _ON_CONFLICT_REPLACE
+        )
     else:
         sql = f"INSERT OR IGNORE INTO usage_events ({_COLS}) VALUES ({_PLACEHOLDERS})"
     before = conn.total_changes
     conn.executemany(sql, rows)
     conn.commit()
-    # ON CONFLICT DO UPDATE 也算 change；为得到"净新增"，用 changes 差值近似
+    # 带 WHERE 的 UPSERT 只在数据真实变化时计数，重复全表扫描返回 0。
+    return conn.total_changes - before
+
+
+def delete_openclaw_cross_format_duplicates(conn: sqlite3.Connection) -> int:
+    """删除同一 session 的 trajectory/v3 完全相同调用，保留 v3 行。"""
+    before = conn.total_changes
+    conn.execute(
+        """
+        DELETE FROM usage_events
+        WHERE id IN (
+            SELECT t.id
+            FROM usage_events AS t
+            JOIN usage_events AS v
+              ON v.source = 'openclaw'
+             AND v.source_file = substr(t.source_file, 1, length(t.source_file) - 17) || '.jsonl'
+             AND v.ts = t.ts
+             AND v.model = t.model
+             AND v.input_tokens = t.input_tokens
+             AND v.output_tokens = t.output_tokens
+             AND v.cache_read_tokens = t.cache_read_tokens
+             AND v.cache_creation_tokens = t.cache_creation_tokens
+             AND v.total_tokens = t.total_tokens
+            WHERE t.source = 'openclaw'
+              AND t.source_file LIKE '%.trajectory.jsonl'
+        )
+        """
+    )
+    conn.commit()
+    return conn.total_changes - before
+
+
+def delete_dedup_keys(conn: sqlite3.Connection, source: str, keys: Iterable[str]) -> int:
+    """删除来源内指定旧去重键，用于日志从临时格式升级为最终格式。"""
+    rows = [(source, key) for key in keys]
+    if not rows:
+        return 0
+    before = conn.total_changes
+    conn.executemany(
+        "DELETE FROM usage_events WHERE source = ? AND dedup_key = ?",
+        rows,
+    )
+    conn.commit()
     return conn.total_changes - before
 
 

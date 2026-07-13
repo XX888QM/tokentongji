@@ -1,7 +1,7 @@
 """Web 服务：静态仪表盘 + JSON API + 后台增量 ingest 线程。
 
 单进程：主线程跑 HTTP server，后台守护线程每 INGEST_INTERVAL 秒增量入库。
-launchd KeepAlive 负责保活。
+长期运行时可按实际环境选择 launchd、tmux 或其他进程管理器。
 """
 
 from __future__ import annotations
@@ -22,17 +22,14 @@ from . import aggregate, config, db
 from . import pricing as pricing_mod
 from .models import _LOCAL_TZ
 
-# ---- 汇率缓存（1小时 TTL，失败降级到上次缓存值） ----
-_RATE_CACHE: dict = {"rate": 7.25, "ts": 0.0}
+# ---- 汇率缓存（1小时 TTL，HTTP 请求只读缓存，外部刷新走后台线程） ----
+_RATE_CACHE: dict = {"rate": 7.25, "ts": 0.0, "refreshing": False}
 _RATE_TTL = 3600
 _RATE_LOCK = threading.Lock()
 
 
-def _get_usd_cny_rate() -> float:
-    with _RATE_LOCK:
-        now = time.time()
-        if now - _RATE_CACHE["ts"] < _RATE_TTL:
-            return _RATE_CACHE["rate"]
+def _refresh_usd_cny_rate() -> None:
+    rate = None
     try:
         req = urllib.request.Request(
             "https://open.er-api.com/v6/latest/USD",
@@ -41,12 +38,28 @@ def _get_usd_cny_rate() -> float:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read(1_000_000))
         rate = float(data["rates"]["CNY"])
-        with _RATE_LOCK:
-            _RATE_CACHE["rate"] = rate
-            _RATE_CACHE["ts"] = time.time()
-        return rate
+        if rate <= 0:
+            rate = None
     except Exception:
-        return _RATE_CACHE["rate"]
+        pass
+    finally:
+        with _RATE_LOCK:
+            if rate is not None:
+                _RATE_CACHE["rate"] = rate
+            _RATE_CACHE["ts"] = time.time()
+            _RATE_CACHE["refreshing"] = False
+
+
+def _get_usd_cny_rate() -> float:
+    with _RATE_LOCK:
+        rate = _RATE_CACHE["rate"]
+        stale = time.time() - _RATE_CACHE["ts"] >= _RATE_TTL
+        should_refresh = stale and not _RATE_CACHE.get("refreshing", False)
+        if should_refresh:
+            _RATE_CACHE["refreshing"] = True
+    if should_refresh:
+        threading.Thread(target=_refresh_usd_cny_rate, daemon=True).start()
+    return rate
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -343,7 +356,7 @@ def _ingest_loop(stop_event: threading.Event) -> None:
             result = ingest.run_once()
             if result.get("records_added"):
                 print(
-                    f"[ingest] +{result['records_added']} 条 "
+                    f"[ingest] 变更 {result['records_added']} 条 "
                     f"(扫描 {result.get('files_scanned', 0)} 文件) @ {_now_local_str()}",
                     flush=True,
                 )

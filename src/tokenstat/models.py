@@ -48,7 +48,7 @@ class UsageRecord:
     """单条 token 使用增量记录。
 
     所有 token 字段都是「本条增量」，下游可直接逐条求和，不会重复计数：
-    - Claude：每个 message.id 一条（已按 message.id 去重，取 output 最大）。
+    - Claude：普通消息按 message.id 去重；fallback iterations 按真实模型拆分。
     - Codex：每个 token_count 事件对累积 total 做差分得到的本轮增量。
 
     归一化口径：

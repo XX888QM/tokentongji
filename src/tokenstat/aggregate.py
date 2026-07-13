@@ -393,12 +393,17 @@ def audit(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
         if expected not in present_sources:
             issues.append({"level": "warn", "message": f"暂无 {expected} 数据"})
 
-    # 源陈旧检测：以库内最新日期为基准（而非 today，避免全员关机数天集体误报），
-    # 某个有数据的源落后 >= STALE_SOURCE_DAYS 天则告警——捕捉「某来源静默停更」。
+    # 同时检查绝对新鲜度与来源间相对落后，避免所有采集一起停摆时仍显示正常。
     dated = [s for s in sources if s["records"] and s["last_date"]]
     if dated:
         newest = max(s["last_date"] for s in dated)
         newest_d = date.fromisoformat(newest)
+        overall_lag = (_today_local() - newest_d).days
+        if overall_lag >= config.STALE_SOURCE_DAYS:
+            issues.append({
+                "level": "warn",
+                "message": f"全部来源已 {overall_lag} 天无新数据（最新 {newest}）",
+            })
         for s in dated:
             lag = (newest_d - date.fromisoformat(s["last_date"])).days
             if lag >= config.STALE_SOURCE_DAYS:

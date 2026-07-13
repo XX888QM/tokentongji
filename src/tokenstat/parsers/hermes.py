@@ -5,9 +5,7 @@
   进行只会递增。不能用增量游标跳过已读过的 session_id——那样长会话后续增长的
   部分会被永久漏计。改用「全表重扫 + dedup_key=session id + ON CONFLICT MAX」，
   等价于始终写入该 session 的最新累计值，幂等且不会漏计增长。
-- reasoning_tokens 是独立列（不含在 output_tokens 里），直接在本 parser 内
-  折进 output_tokens（计费口径两者同价），reasoning_tokens 字段置 0，避免
-  downstream 按 source 特判重复加算。
+- reasoning_tokens 是 output_tokens 的展示子集，不另加到总量或费用。
 - cwd 列作为 project；source 列是发起平台(cli/telegram/weixin/...)不是 LLM
   供应商，不用于分源，统一挂 source="hermes"。
 - parent_session_id 非空 → 视为子会话/委派(delegation)，category=subagent。
@@ -68,9 +66,10 @@ def _parse_row(row: sqlite3.Row, db_path: Path) -> Optional[UsageRecord]:
     input_tokens = int(row["input_tokens"] or 0)
     cache_read_tokens = int(row["cache_read_tokens"] or 0)
     cache_creation_tokens = int(row["cache_write_tokens"] or 0)
-    output_total = int(row["output_tokens"] or 0) + int(row["reasoning_tokens"] or 0)
+    output_tokens = int(row["output_tokens"] or 0)
+    reasoning_tokens = int(row["reasoning_tokens"] or 0)
 
-    total_tokens = input_tokens + output_total + cache_read_tokens + cache_creation_tokens
+    total_tokens = input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
     if total_tokens == 0:
         return None  # 刚创建、还没产生任何 token 的会话
 
@@ -84,10 +83,10 @@ def _parse_row(row: sqlite3.Row, db_path: Path) -> Optional[UsageRecord]:
         model=model,
         project=cwd or "hermes",
         input_tokens=input_tokens,
-        output_tokens=output_total,
+        output_tokens=output_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_creation_tokens=cache_creation_tokens,
-        reasoning_tokens=0,  # 已折进 output_tokens
+        reasoning_tokens=reasoning_tokens,
         total_tokens=total_tokens,
         session_id=row["id"] or "",
         source_file=str(db_path),

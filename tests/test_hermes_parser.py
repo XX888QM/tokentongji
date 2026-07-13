@@ -1,4 +1,4 @@
-"""Hermes 解析器测试：sessions 表全量重扫 + reasoning 折进 output + 子会话分类。"""
+"""Hermes 解析器测试：sessions 表全量重扫 + reasoning 子集口径 + 子会话分类。"""
 import sqlite3
 import tempfile
 import unittest
@@ -39,7 +39,7 @@ class TestHermesParser(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_basic_fields_and_reasoning_folded_into_output(self):
+    def test_reasoning_is_output_subset_and_not_added_twice(self):
         _make_db(self.db, [{
             "id": "s1", "model": "gpt-5.5", "cwd": "/proj", "started_at": 1700000000,
             "input_tokens": 100, "output_tokens": 50, "cache_read_tokens": 10,
@@ -50,11 +50,11 @@ class TestHermesParser(unittest.TestCase):
         r = recs[0]
         self.assertEqual(r.source, "hermes")
         self.assertEqual(r.input_tokens, 100)
-        self.assertEqual(r.output_tokens, 70)  # 50 + 20 reasoning
-        self.assertEqual(r.reasoning_tokens, 0)  # 已折进 output，不重复存
+        self.assertEqual(r.output_tokens, 50)
+        self.assertEqual(r.reasoning_tokens, 20)
         self.assertEqual(r.cache_read_tokens, 10)
         self.assertEqual(r.cache_creation_tokens, 5)
-        self.assertEqual(r.total_tokens, 100 + 70 + 10 + 5)
+        self.assertEqual(r.total_tokens, 100 + 50 + 10 + 5)
         self.assertEqual(r.project, "/proj")
         self.assertEqual(r.session_id, "s1")
         self.assertEqual(r.dedup_key, "hermes:s1")

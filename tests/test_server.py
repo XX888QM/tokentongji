@@ -7,7 +7,7 @@ import unittest
 from typing import Optional
 from unittest.mock import patch
 
-from tokenstat import db
+from tokenstat import db, server
 from tokenstat.models import UsageRecord
 from tokenstat.server import Handler
 
@@ -113,6 +113,27 @@ class TestDailyEndpointFallback(unittest.TestCase):
         code, body = _call_get("/api/insights", self._db_path)
         self.assertEqual(code, 200)
         self.assertIn("cards", body)
+
+    def test_rates_endpoint_returns_cache_before_background_refresh(self):
+        refresh_targets = []
+
+        class DeferredThread:
+            def __init__(self, target, daemon):
+                self.target = target
+                self.daemon = daemon
+
+            def start(self):
+                refresh_targets.append(self.target)
+
+        with patch.dict(server._RATE_CACHE, {"rate": 7.25, "ts": 0.0}, clear=True):
+            with patch("tokenstat.server.threading.Thread", DeferredThread):
+                with patch("tokenstat.server.urllib.request.urlopen") as urlopen:
+                    code, body = _call_get("/api/rates", self._db_path)
+
+        self.assertEqual(code, 200)
+        self.assertEqual(body, {"usd_cny": 7.25})
+        self.assertEqual(len(refresh_targets), 1)
+        urlopen.assert_not_called()
 
     def test_session_detail_requires_session_id(self):
         code, body = _call_get("/api/session_detail?period=today", self._db_path)

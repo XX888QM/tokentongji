@@ -13,9 +13,12 @@ def _env_int(name: str, default: int) -> int:
     if val is None:
         return default
     try:
-        return int(val)
+        parsed = int(val)
     except ValueError:
         raise ValueError(f"环境变量 {name} 须为整数，收到 {val!r}")
+    if parsed <= 0:
+        raise ValueError(f"环境变量 {name} 须为正整数，收到 {val!r}")
+    return parsed
 
 HOME = Path.home()
 

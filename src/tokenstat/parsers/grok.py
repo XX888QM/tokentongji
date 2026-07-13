@@ -4,8 +4,8 @@
 - 主源：`~/.grok/logs/unified.jsonl`（全局统一日志，非 per-session）。
 - 真正带 token 的事件：`msg == "shell.turn.inference_done"`，ctx 含
   prompt_tokens / cached_prompt_tokens / completion_tokens / reasoning_tokens。
-- model 不在 inference_done 里：靠同 sid 的 `model changed`（ctx.model）carry-forward。
-- cwd 不在 inference_done 里：靠同 sid 的 `session created`（ctx.cwd）carry-forward。
+- Grok CLI 的 model/cwd 靠同 sid 的 `model changed` / `session created` carry-forward；
+  claude-mem API 转录事件可在 inference_done ctx 内直接提供，并优先使用。
 - 每条 inference_done 是**本轮 loop 的增量**（非累积总量），直接入库求和即可。
 - reasoning_tokens 是 completion 子集（实测 reason ≤ completion），与 Codex 同口径：
   output=completion，reasoning 仅展示不另计费。
@@ -117,8 +117,8 @@ def process_record(
         loop_index = 0
     dedup_key = f"grok:{sid}:{ts_raw}:{loop_index}"
 
-    model = state.models.get(sid) or state.default_model
-    project = state.cwds.get(sid) or "grok"
+    model = str(ctx.get("model") or state.models.get(sid) or state.default_model)
+    project = str(ctx.get("cwd") or state.cwds.get(sid) or "grok")
     total = input_tokens + cached + completion
 
     return UsageRecord(

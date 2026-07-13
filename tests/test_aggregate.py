@@ -327,7 +327,8 @@ class TestStaleSourceDetection(unittest.TestCase):
                 UsageRecord(ts=_ts("2026-06-06"), source="opencode", model="known",
                             project="/tmp/c", input_tokens=10, total_tokens=10, dedup_key="stale"),
             ])
-            a = aggregate.audit(conn, self._pricing())
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 20)):
+                a = aggregate.audit(conn, self._pricing())
         finally:
             conn.close()
         msgs = " ".join(i["message"] for i in a["issues"])
@@ -345,11 +346,30 @@ class TestStaleSourceDetection(unittest.TestCase):
                 UsageRecord(ts=_ts("2026-06-19"), source="codex", model="known",
                             project="/tmp/b", input_tokens=10, total_tokens=10, dedup_key="x"),
             ])
-            a = aggregate.audit(conn, self._pricing())
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 20)):
+                a = aggregate.audit(conn, self._pricing())
         finally:
             conn.close()
         msgs = " ".join(i["message"] for i in a["issues"])
         self.assertNotIn("无新数据", msgs)  # 差 1 天 < 阈值 3
+
+    def test_all_sources_stale_against_today_warns(self):
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-01-01"), source="claude", model="known",
+                            project="/tmp/a", input_tokens=10, total_tokens=10, dedup_key="old-c"),
+                UsageRecord(ts=_ts("2026-01-01"), source="codex", model="known",
+                            project="/tmp/b", input_tokens=10, total_tokens=10, dedup_key="old-x"),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 1, 10)):
+                a = aggregate.audit(conn, self._pricing())
+        finally:
+            conn.close()
+        msgs = " ".join(i["message"] for i in a["issues"])
+        self.assertIn("全部来源已 9 天无新数据", msgs)
+        self.assertEqual(a["status"], "warn")
 
 
 class TestCategoryCard(unittest.TestCase):
