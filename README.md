@@ -1,5 +1,7 @@
 # Token 统计仪表盘
 
+🇨🇳 **简体中文** · [🇹🇼 繁體中文](README.zh-TW.md) · [🇺🇸 English](README.en.md) · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · [🇪🇸 Español](README.es.md)
+
 统计本机 **Claude Code**、**Codex**、**OpenCode**、**OpenClaw**、**Hermes**、**Grok** 六类工具的 token 用量，
 按天 / 周 / 月 / 累计汇总，桌面浏览器本地 Web 仪表盘实时展示。纯本地日志解析，**不调用任何外部 API（汇率除外）、零第三方依赖**。项目不提供手机端适配。
 
