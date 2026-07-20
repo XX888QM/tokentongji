@@ -17,7 +17,7 @@ import sqlite3
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
-from .models import UsageRecord
+from .models import SOURCE_GROK, SOURCE_OPENCLAW, SOURCE_OPENCODE, UsageRecord
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS usage_events (
@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
     cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
     reasoning_tokens      INTEGER NOT NULL DEFAULT 0,
     total_tokens          INTEGER NOT NULL DEFAULT 0,
+    request_prompt_tokens INTEGER,
     session_id            TEXT    NOT NULL DEFAULT '',
     source_file           TEXT    NOT NULL DEFAULT '',
     pos                   INTEGER NOT NULL DEFAULT 0,
@@ -68,9 +69,30 @@ def get_conn(db_path: Path) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """建表 + 索引（幂等）。"""
+    """建表 + 索引（幂等），并做一次性可回滚的旧库迁移。"""
     conn.executescript(_SCHEMA)
-    conn.commit()
+    try:
+        # 同一个事务保证不会留下“列已加、历史上下文却只回填一半”的库。
+        conn.execute("BEGIN IMMEDIATE")
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(usage_events)").fetchall()
+        }
+        if "request_prompt_tokens" not in columns:
+            conn.execute("ALTER TABLE usage_events ADD COLUMN request_prompt_tokens INTEGER")
+            # 这三类旧行本身就是一次完成调用，input + cache_read 可安全还原完整
+            # prompt；Codex/Hermes 是累计口径，保持 NULL，不能猜长上下文档。
+            conn.execute(
+                """
+                UPDATE usage_events
+                SET request_prompt_tokens = input_tokens + cache_read_tokens
+                WHERE source IN (?, ?, ?)
+                """,
+                (SOURCE_GROK, SOURCE_OPENCLAW, SOURCE_OPENCODE),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def backup_database(source: Path, destination: Path) -> None:
@@ -99,6 +121,7 @@ def _row_tuple(r: UsageRecord) -> tuple:
         r.cache_creation_tokens,
         r.reasoning_tokens,
         r.total_tokens,
+        r.request_prompt_tokens,
         r.session_id,
         r.source_file,
         r.pos,
@@ -109,9 +132,9 @@ def _row_tuple(r: UsageRecord) -> tuple:
 _COLS = (
     "ts, date_local, source, model, project, category, "
     "input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, "
-    "reasoning_tokens, total_tokens, session_id, source_file, pos, dedup_key"
+    "reasoning_tokens, total_tokens, request_prompt_tokens, session_id, source_file, pos, dedup_key"
 )
-_PLACEHOLDERS = ",".join(["?"] * 16)
+_PLACEHOLDERS = ",".join(["?"] * 17)
 
 # Claude 旧流式格式：同 message.id 多行递增，整体采用 total 更大的完整快照。
 _ON_CONFLICT_MAX = """
@@ -127,6 +150,7 @@ ON CONFLICT(dedup_key) DO UPDATE SET
     cache_creation_tokens = excluded.cache_creation_tokens,
     reasoning_tokens      = excluded.reasoning_tokens,
     total_tokens          = excluded.total_tokens,
+    request_prompt_tokens = excluded.request_prompt_tokens,
     session_id            = excluded.session_id,
     source_file           = excluded.source_file,
     pos                   = excluded.pos
@@ -146,6 +170,7 @@ ON CONFLICT(dedup_key) DO UPDATE SET
     cache_creation_tokens = excluded.cache_creation_tokens,
     reasoning_tokens      = excluded.reasoning_tokens,
     total_tokens          = excluded.total_tokens,
+    request_prompt_tokens = excluded.request_prompt_tokens,
     session_id            = excluded.session_id,
     source_file           = excluded.source_file,
     pos                   = excluded.pos
@@ -159,6 +184,7 @@ WHERE excluded.ts != usage_events.ts
    OR excluded.cache_creation_tokens != usage_events.cache_creation_tokens
    OR excluded.reasoning_tokens != usage_events.reasoning_tokens
    OR excluded.total_tokens != usage_events.total_tokens
+   OR excluded.request_prompt_tokens IS NOT usage_events.request_prompt_tokens
    OR excluded.session_id != usage_events.session_id
 """
 

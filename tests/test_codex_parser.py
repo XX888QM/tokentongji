@@ -16,21 +16,26 @@ def _turn_context(model, cwd):
     return {"type": "turn_context", "payload": {"model": model, "cwd": cwd}}
 
 
-def _token_count(total, input_t, cached, output, reasoning=0, ts="2026-05-01T10:00:00Z"):
+def _token_count(
+    total, input_t, cached, output, reasoning=0, ts="2026-05-01T10:00:00Z", last=None
+):
+    info = {
+        "total_token_usage": {
+            "input_tokens": input_t,
+            "cached_input_tokens": cached,
+            "output_tokens": output,
+            "reasoning_output_tokens": reasoning,
+            "total_tokens": total,
+        }
+    }
+    if last is not None:
+        info["last_token_usage"] = last
     return {
         "type": "event_msg",
         "timestamp": ts,
         "payload": {
             "type": "token_count",
-            "info": {
-                "total_token_usage": {
-                    "input_tokens": input_t,
-                    "cached_input_tokens": cached,
-                    "output_tokens": output,
-                    "reasoning_output_tokens": reasoning,
-                    "total_tokens": total,
-                }
-            },
+            "info": info,
             "rate_limits": {"some": "thing"},
         },
     }
@@ -76,6 +81,22 @@ class TestCodexParser(unittest.TestCase):
         self.assertEqual(rec.output_tokens, 700 - 400)    # delta output = 300
         self.assertEqual(rec.cache_read_tokens, 300 - 200)  # delta cached = 100
         self.assertEqual(rec.input_tokens, (800 - 600) - (300 - 200))  # fresh delta = 100
+
+    def test_last_token_usage_marks_real_request_prompt(self):
+        codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 0, self.state)
+        rec = codex.process_record(
+            _token_count(
+                1000,
+                600,
+                200,
+                400,
+                last={"input_tokens": 300_000, "cached_input_tokens": 280_000},
+            ),
+            "/f",
+            1,
+            self.state,
+        )
+        self.assertEqual(rec.request_prompt_tokens, 300_000)
 
     def test_duplicate_snapshot_skipped(self):
         codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 0, self.state)

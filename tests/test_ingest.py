@@ -204,6 +204,52 @@ class TestDbUpserts(unittest.TestCase):
         self.assertEqual(keys, ["unique", "v3"])
 
 
+class TestRequestPromptMigration(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.get_conn(":memory:")
+        # 模拟升级前的实际表结构：没有 request_prompt_tokens 列。
+        self.conn.executescript(db._SCHEMA.replace("    request_prompt_tokens INTEGER,\n", ""))
+        for source in ("grok", "openclaw", "opencode", "codex", "hermes"):
+            self.conn.execute(
+                """
+                INSERT INTO usage_events (
+                    ts, date_local, source, model, project, input_tokens,
+                    cache_read_tokens, dedup_key
+                ) VALUES (1, '2026-07-20', ?, 'm', '/p', 100, 25, ?)
+                """,
+                (source, f"legacy-{source}"),
+            )
+        self.conn.commit()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_migrates_only_confirmed_single_request_sources_once(self):
+        db.init_db(self.conn)
+        rows = {
+            row["source"]: row["request_prompt_tokens"]
+            for row in self.conn.execute(
+                "SELECT source, request_prompt_tokens FROM usage_events"
+            )
+        }
+        self.assertEqual(rows["grok"], 125)
+        self.assertEqual(rows["openclaw"], 125)
+        self.assertEqual(rows["opencode"], 125)
+        self.assertIsNone(rows["codex"])
+        self.assertIsNone(rows["hermes"])
+
+        # 第二次启动不应把之后刻意保留 NULL 的记录再次猜测回填。
+        self.conn.execute(
+            "UPDATE usage_events SET request_prompt_tokens = NULL WHERE source = 'grok'"
+        )
+        self.conn.commit()
+        db.init_db(self.conn)
+        value = self.conn.execute(
+            "SELECT request_prompt_tokens FROM usage_events WHERE source = 'grok'"
+        ).fetchone()[0]
+        self.assertIsNone(value)
+
+
 class TestCodexIngest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -51,6 +51,7 @@ class TestOpencodeParser(unittest.TestCase):
         self.assertEqual(r.reasoning_tokens, 20)
         self.assertEqual(r.cache_read_tokens, 10)
         self.assertEqual(r.cache_creation_tokens, 5)
+        self.assertEqual(r.request_prompt_tokens, 110)
         # 无 total 字段时按各分量求和
         self.assertEqual(r.total_tokens, 100 + 50 + 20 + 10 + 5)
         self.assertEqual(r.ts, 1_700_000_000)  # ms → s

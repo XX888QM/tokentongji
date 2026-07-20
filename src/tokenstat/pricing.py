@@ -12,6 +12,7 @@ model 归一化策略（recon 实测约束）：
 from __future__ import annotations
 
 import json
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -64,6 +65,22 @@ def _merged_models(pricing: dict) -> dict:
     return out
 
 
+def _raw_for_model(model: str, pricing: dict) -> Optional[dict]:
+    """按既有归一化规则找到原始价目；未知模型返回 None。"""
+    models = _merged_models(pricing)
+    clean = _clean_model(model)
+    if clean in models:
+        return models[clean]
+
+    best = ""
+    for cand in models:
+        if clean.startswith(cand) and len(cand) > len(best):
+            best = cand
+    if best:
+        return models[best]
+    return _family_rates(clean, models, pricing.get("default", {}))
+
+
 def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
     """已知家族的兜底：版本号没精确命中时按家族归档。"""
     def pick(*keys):
@@ -74,8 +91,12 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
 
     if clean.startswith("claude-fable") or clean.startswith("claude-mythos"):
         return pick("claude-fable-5", "claude-mythos-5")
-    if clean.startswith("claude-opus-4-1") or clean.startswith("claude-opus-4-0"):
+    if clean.startswith("claude-opus-4-1"):
         return pick("claude-opus-4-1")
+    if clean.startswith(("claude-opus-4-0", "claude-opus-4-20")):
+        return pick("claude-opus-4-0")
+    if clean.startswith("claude-sonnet-4-20"):
+        return pick("claude-sonnet-4-0")
     if clean.startswith("claude-opus"):
         return pick("claude-opus-4-8", "claude-opus-4-7")
     if clean.startswith("claude-sonnet"):
@@ -100,40 +121,77 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
     return None
 
 
-def rates_for_model(model: str, pricing: dict, cache_window: str = "5m") -> dict:
+def _effective_raw(raw: dict, priced_at: Optional[date]) -> dict:
+    """应用按日期生效的后续价，未指定日期时按当天价格展示。"""
+    next_pricing = raw.get("next_pricing") or {}
+    starts_on = next_pricing.get("starts_on")
+    when = priced_at or date.today()
+    if starts_on and when.isoformat() >= starts_on:
+        return {**raw, **next_pricing}
+    return raw
+
+
+def long_context_threshold_for_model(
+    model: str, pricing: dict, priced_at: Optional[date] = None
+) -> Optional[int]:
+    """返回该模型按单次请求升到长上下文价的阈值。"""
+    raw = _raw_for_model(model, pricing)
+    if raw is None:
+        return None
+    rule = _effective_raw(raw, priced_at).get("long_context") or {}
+    threshold = rule.get("threshold")
+    try:
+        return int(threshold) if threshold is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def long_context_thresholds(pricing: dict) -> tuple[int, ...]:
+    """返回价表内所有长上下文阈值，供聚合层按请求分桶。"""
+    thresholds = {
+        threshold
+        for model in _merged_models(pricing)
+        for threshold in [long_context_threshold_for_model(model, pricing)]
+        if threshold is not None
+    }
+    return tuple(sorted(thresholds))
+
+
+def rates_for_model(
+    model: str,
+    pricing: dict,
+    cache_window: str = "5m",
+    long_context: bool = False,
+    priced_at: Optional[date] = None,
+) -> dict:
     """返回归一化单价 {input, output, cache_read, cache_write}。
 
-    cache_window: '5m'(默认) 或 '1h'，决定 cache 写入用哪档价。
+    cache_window: '5m'(默认)、'1h' 或 '30m'，决定 cache 写入用哪档价。
     """
-    models = _merged_models(pricing)
     default = pricing.get("default", {})
-    clean = _clean_model(model)
-
-    raw = None
-    if clean in models:
-        raw = models[clean]
-    else:
-        # 最长前缀匹配
-        best = ""
-        for cand in models:
-            if clean.startswith(cand) and len(cand) > len(best):
-                best = cand
-        if best:
-            raw = models[best]
-        else:
-            raw = _family_rates(clean, models, default)
+    raw = _raw_for_model(model, pricing)
 
     if raw is None:
         if model and model != "<synthetic>":
             _UNKNOWN_MODELS.add(model)
         raw = default
 
-    cw_key = "cache_write_1h" if cache_window == "1h" else "cache_write_5m"
+    raw = _effective_raw(raw, priced_at)
+    if long_context and raw.get("long_context"):
+        raw = {**raw, **raw["long_context"]}
+
+    cw_key = {
+        "1h": "cache_write_1h",
+        "30m": "cache_write_30m",
+    }.get(cache_window, "cache_write_5m")
+    cache_write = raw.get(cw_key)
+    if cache_write is None and cw_key != "cache_write_30m":
+        cache_write = raw.get("cache_write_30m")
     return {
         "input": raw.get("input", 0.0) or 0.0,
         "output": raw.get("output", 0.0) or 0.0,
         "cache_read": raw.get("cache_read", 0.0) or 0.0,
-        "cache_write": raw.get(cw_key, 0.0) or 0.0,
+        "cache_write": cache_write or 0.0,
     }
 
 
@@ -141,15 +199,7 @@ def is_unknown_model(model: str, pricing: dict) -> bool:
     """判断模型是否缺少明确价格规则；不写入全局 unknown 状态。"""
     if not model or model == "<synthetic>":
         return False
-    models = _merged_models(pricing)
-    default = pricing.get("default", {})
-    clean = _clean_model(model)
-    if clean in models:
-        return False
-    for cand in models:
-        if clean.startswith(cand):
-            return False
-    return _family_rates(clean, models, default) is None
+    return _raw_for_model(model, pricing) is None
 
 
 def cost_for(
@@ -161,19 +211,27 @@ def cost_for(
     reasoning_tokens: int = 0,
     pricing: Optional[dict] = None,
     cache_window: str = "5m",
+    long_context: bool = False,
+    priced_at: Optional[date] = None,
 ) -> float:
     """按单价把各类 token 折算为美元。
 
     归一化口径（两来源统一）：
     - input_tokens = 全价输入（已剔除缓存）。
     - cache_read_tokens = 缓存命中，低价。
-    - cache_creation_tokens = 缓存写入（仅 Claude）。
+    - cache_creation_tokens = 缓存写入（Claude 或来源已明确标出的 OpenAI 写入）。
     - output_tokens 应为计费输出；若来源把 reasoning 单列，调用方需先并入 output。
       reasoning_tokens 仅展示、不另计费。
     """
     if pricing is None:
         pricing = load_pricing()
-    r = rates_for_model(model, pricing, cache_window)
+    r = rates_for_model(
+        model,
+        pricing,
+        cache_window,
+        long_context=long_context,
+        priced_at=priced_at,
+    )
     total = (
         input_tokens * r["input"]
         + output_tokens * r["output"]

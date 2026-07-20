@@ -145,6 +145,22 @@ def process_record(
     if not isinstance(tot, dict):
         return None
 
+    # total_token_usage 是累计计数，仍用于稳定差分；last_token_usage 才是本次
+    # 请求的完整 prompt。字段不全时宁可不标记，不能把累计差分误当 prompt。
+    request_prompt_tokens = None
+    last = info.get("last_token_usage")
+    if isinstance(last, dict) and {
+        "input_tokens", "cached_input_tokens"
+    }.issubset(last):
+        try:
+            last_input = int(last.get("input_tokens") or 0)
+            last_cached = int(last.get("cached_input_tokens") or 0)
+        except (TypeError, ValueError):
+            pass
+        else:
+            if 0 <= last_cached <= last_input:
+                request_prompt_tokens = last_input
+
     cur = {k: int(tot.get(k, 0) or 0) for k in _FIELDS}
     if state.pending_baseline:
         state.pending_baseline = False
@@ -188,6 +204,7 @@ def process_record(
         cache_creation_tokens=0,
         reasoning_tokens=d_reasoning,
         total_tokens=total_norm,
+        request_prompt_tokens=request_prompt_tokens,
         session_id=state.session_id,
         source_file=source_file,
         pos=pos,

@@ -31,6 +31,7 @@ class TestTrajectoryFormat(unittest.TestCase):
         self.assertEqual(r.cache_read_tokens, 10)
         self.assertEqual(r.cache_creation_tokens, 7)   # 来自 promptCache.lastCallUsage
         self.assertEqual(r.total_tokens, 160 + 7)      # total_raw + cacheWrite
+        self.assertEqual(r.request_prompt_tokens, 110)
         self.assertEqual(r.project, "openclaw-weixin")  # 从 sessionKey 第三段
         self.assertEqual(r.dedup_key, "openclaw:run-1:3")
 
@@ -81,6 +82,7 @@ class TestV3Format(unittest.TestCase):
         self.assertEqual(r.session_id, "sX")
         self.assertEqual(r.project, "/home/x")
         self.assertEqual(r.total_tokens, 150)
+        self.assertEqual(r.request_prompt_tokens, 100)
         self.assertEqual(r.dedup_key, "openclaw-v3:m1")
         self.assertEqual(r.ts, 1_700_000_000)  # ms → s
 

@@ -132,6 +132,7 @@ def process_record(
         cache_creation_tokens=0,
         reasoning_tokens=reasoning,
         total_tokens=total,
+        request_prompt_tokens=prompt,
         session_id=sid,
         source_file=source_file,
         pos=pos,

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 # Asia/Shanghai 自 1991 年起无夏令时，固定 UTC+8。
 # 优先用 zoneinfo（更规范），缺失则回退固定偏移——保证零依赖可运行。
@@ -55,6 +56,8 @@ class UsageRecord:
     - input_tokens = 全价输入（已剔除缓存命中部分）。
     - cache_read_tokens = 缓存命中输入。
     - cache_creation_tokens = 缓存写入（仅 Claude）。
+    - request_prompt_tokens = 有原始单次请求口径时的完整 prompt（含缓存）；
+      没有可靠口径时为 None，不能据此猜长上下文计费档。
     - output_tokens = 普通输出；Codex 已含 reasoning，Opencode 将 reasoning 单独保留。
     - total_tokens = 来源原始总量；聚合层按来源口径避免 reasoning 重复或漏计。
     """
@@ -69,6 +72,7 @@ class UsageRecord:
     cache_creation_tokens: int = 0
     reasoning_tokens: int = 0
     total_tokens: int = 0
+    request_prompt_tokens: Optional[int] = None
     session_id: str = ""
     source_file: str = ""
     pos: int = 0  # 记录在文件内的字节偏移（调试/溯源用）
@@ -92,6 +96,13 @@ class UsageRecord:
             value = getattr(self, name)
             if not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} 必须为非负整数，收到 {value!r}")
+        if self.request_prompt_tokens is not None and (
+            not isinstance(self.request_prompt_tokens, int) or self.request_prompt_tokens < 0
+        ):
+            raise ValueError(
+                "request_prompt_tokens 必须为非负整数或 None，"
+                f"收到 {self.request_prompt_tokens!r}"
+            )
 
         # 损坏/伪造日志可能塞入超长字符串，截断防止撑大 SQLite / 拖慢聚合。
         # frozen dataclass 用 object.__setattr__ 就地改写。

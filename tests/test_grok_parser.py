@@ -65,6 +65,7 @@ class TestGrokParser(unittest.TestCase):
         self.assertEqual(r.output_tokens, 50)
         self.assertEqual(r.reasoning_tokens, 30)
         self.assertEqual(r.total_tokens, 600 + 400 + 50)
+        self.assertEqual(r.request_prompt_tokens, 1000)
         self.assertEqual(r.session_id, "s1")
         self.assertEqual(r.dedup_key, "grok:s1:2026-07-09T10:00:05.000Z:1")
 

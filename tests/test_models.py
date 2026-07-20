@@ -26,6 +26,16 @@ class TestUsageRecord(unittest.TestCase):
         with self.assertRaises(ValueError):
             UsageRecord(ts=1, source="claude", model="m", project="/x", input_tokens=-5)
 
+    def test_request_prompt_tokens_must_be_nonnegative_or_none(self):
+        r = UsageRecord(
+            ts=1, source="codex", model="gpt-5.4", project="/x", request_prompt_tokens=123
+        )
+        self.assertEqual(r.request_prompt_tokens, 123)
+        with self.assertRaises(ValueError):
+            UsageRecord(
+                ts=1, source="codex", model="gpt-5.4", project="/x", request_prompt_tokens=-1
+            )
+
     def test_overlong_strings_truncated(self):
         # 损坏/伪造日志塞超长字符串时应被截断，防撑大 SQLite
         r = UsageRecord(ts=1, source="claude", model="m" * 5000,

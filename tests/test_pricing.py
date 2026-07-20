@@ -1,4 +1,5 @@
 import unittest
+from datetime import date
 
 from tokenstat import pricing
 
@@ -23,26 +24,40 @@ class TestNormalization(unittest.TestCase):
         self.assertEqual(pricing.rates_for_model("claude-haiku-4-5", self.p)["input"], 1.0)
 
     def test_sonnet_5(self):
-        r = pricing.rates_for_model("claude-sonnet-5", self.p)
+        r = pricing.rates_for_model("claude-sonnet-5", self.p, priced_at=date(2026, 8, 31))
+        self.assertEqual(r["input"], 2.0)
+        self.assertEqual(r["cache_read"], 0.20)
+        self.assertEqual(r["output"], 10.0)
+        self.assertEqual(r["cache_write"], 2.50)
+        r = pricing.rates_for_model(
+            "claude-sonnet-5", self.p, cache_window="1h", priced_at=date(2026, 8, 31)
+        )
+        self.assertEqual(r["cache_write"], 4.0)
+        r = pricing.rates_for_model("claude-sonnet-5", self.p, priced_at=date(2026, 9, 1))
         self.assertEqual(r["input"], 3.0)
+        self.assertEqual(r["cache_read"], 0.30)
         self.assertEqual(r["output"], 15.0)
+        self.assertEqual(r["cache_write"], 3.75)
+        r = pricing.rates_for_model(
+            "claude-sonnet-5", self.p, cache_window="1h", priced_at=date(2026, 9, 1)
+        )
+        self.assertEqual(r["cache_write"], 6.0)
 
     def test_unmatched_sonnet_family_falls_back_to_sonnet_5_not_4_6(self):
         # 未来未收录的 sonnet 变体（不含 claude-sonnet-5 前缀）应通过家族兜底
         # 归到最新的 sonnet-5，而非旧的 sonnet-4-6
-        r = pricing.rates_for_model("claude-sonnet-6", self.p)
+        r = pricing.rates_for_model("claude-sonnet-6", self.p, priced_at=date(2026, 9, 1))
         self.assertEqual(r["input"], 3.0)
 
     def test_region_prefix_and_suffix_stripped(self):
         r = pricing.rates_for_model("us.anthropic.claude-opus-4-8[1m]", self.p)
         self.assertEqual(r["input"], 5.0)
 
-    def test_gpt5_codex_uses_codex_specialized_pricing(self):
-        for model in ("gpt-5-codex", "codex-auto-review"):
-            r = pricing.rates_for_model(model, self.p)
-            self.assertEqual(r["input"], 1.75, model)
-            self.assertEqual(r["cache_read"], 0.175, model)
-            self.assertEqual(r["output"], 14.0, model)
+    def test_gpt5_codex_and_auto_review_have_distinct_pricing(self):
+        codex = pricing.rates_for_model("gpt-5-codex", self.p)
+        review = pricing.rates_for_model("codex-auto-review", self.p)
+        self.assertEqual((codex["input"], codex["cache_read"], codex["output"]), (1.25, 0.125, 10.0))
+        self.assertEqual((review["input"], review["cache_read"], review["output"]), (1.75, 0.175, 14.0))
 
     def test_gpt5_versioned(self):
         self.assertEqual(pricing.rates_for_model("gpt-5.4", self.p)["input"], 2.5)
@@ -67,10 +82,36 @@ class TestNormalization(unittest.TestCase):
         r = pricing.rates_for_model("grok-4.5", self.p)
         self.assertEqual(r["input"], 2.0)
         self.assertEqual(r["output"], 6.0)
-        self.assertEqual(r["cache_read"], 0.20)
+        self.assertEqual(r["cache_read"], 0.30)
+        long = pricing.rates_for_model("grok-4.5", self.p, long_context=True)
+        self.assertEqual((long["input"], long["cache_read"], long["output"]), (4.0, 0.60, 12.0))
         # 家族兜底
         fam = pricing.rates_for_model("grok-99-future", self.p)
         self.assertEqual(fam["input"], 2.0)
+
+    def test_grok_and_deepseek_aliases(self):
+        build = pricing.rates_for_model("grok-build-0.1", self.p)
+        code_fast = pricing.rates_for_model("grok-code-fast-1", self.p)
+        latest = pricing.rates_for_model("grok-latest", self.p)
+        multi_agent = pricing.rates_for_model("grok-4.20-multi-agent-0309", self.p)
+        self.assertEqual((code_fast["input"], code_fast["cache_read"], code_fast["output"]),
+                         (build["input"], build["cache_read"], build["output"]))
+        self.assertEqual((latest["input"], latest["cache_read"], latest["output"]), (1.25, 0.20, 2.50))
+        self.assertEqual((multi_agent["input"], multi_agent["cache_read"], multi_agent["output"]),
+                         (1.25, 0.20, 2.50))
+        for alias in ("deepseek-chat", "deepseek-reasoner"):
+            r = pricing.rates_for_model(alias, self.p)
+            self.assertEqual((r["input"], r["cache_read"], r["output"]), (0.14, 0.0028, 0.28), alias)
+
+    def test_openai_30m_cache_write_and_pro_cache_read(self):
+        sol = pricing.rates_for_model("gpt-5.6-sol", self.p, cache_window="30m")
+        self.assertEqual(sol["cache_write"], 6.25)
+        long_sol = pricing.rates_for_model("gpt-5.6-sol", self.p, cache_window="30m", long_context=True)
+        self.assertEqual(long_sol["cache_write"], 12.50)
+        pro = pricing.rates_for_model("gpt-5.4-pro", self.p)
+        self.assertEqual(pro["cache_read"], 30.0)
+        long_pro = pricing.rates_for_model("gpt-5.4-pro", self.p, long_context=True)
+        self.assertEqual(long_pro["cache_read"], 60.0)
 
     def test_cache_window_1h(self):
         r5 = pricing.rates_for_model("claude-opus-4-7", self.p, cache_window="5m")

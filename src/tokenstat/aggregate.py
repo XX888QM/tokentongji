@@ -5,7 +5,8 @@
 - 归一化总量 total = input + output + cache_read + cache_creation。
   Codex 的 reasoning 是 output 子集，不重复计；Opencode 的 reasoning 独立于
   output，上屏与计费时并入 output。
-- 费用按 pricing 单价、逐 (source, model) 行计算后再汇总。
+- 费用按计价日和单次请求上下文档位分桶后计算，再汇总；不能把多次短请求
+  加总成一次长上下文请求。
 """
 
 from __future__ import annotations
@@ -70,6 +71,9 @@ def _total_sql(alias: str = "") -> str:
 
 
 def _cost_from_row(r: dict, pricing: dict) -> float:
+    priced_at = date.fromisoformat(r["pricing_date"]) if r.get("pricing_date") else None
+    threshold = pricing_mod.long_context_threshold_for_model(r["model"], pricing, priced_at)
+    long_context = bool(r.get(f"context_gt_{threshold}", 0)) if threshold else False
     return pricing_mod.cost_for(
         r["model"],
         input_tokens=r["input"],
@@ -78,16 +82,37 @@ def _cost_from_row(r: dict, pricing: dict) -> float:
         cache_creation_tokens=r["cache_creation"],
         reasoning_tokens=r.get("reasoning", 0),
         pricing=pricing,
+        long_context=long_context,
+        priced_at=priced_at,
     )
 
 
+def _pricing_context_sql(pricing: dict) -> tuple[str, str]:
+    """按所有已知阈值给逐请求来源分桶，避免聚合后误升长上下文价。
+
+    只有 `request_prompt_tokens` 非空的行才能判档。旧库迁移时仅把确认为
+    单次调用的 Grok/OpenClaw/OpenCode 行安全回填；Codex/Hermes 的累计口径保持
+    NULL，绝不拿汇总 token 猜上下文大小。
+    """
+    fields = []
+    groups = []
+    for threshold in pricing_mod.long_context_thresholds(pricing):
+        expr = f"CASE WHEN request_prompt_tokens > {threshold} THEN 1 ELSE 0 END"
+        fields.append(f"{expr} AS context_gt_{threshold}")
+        groups.append(expr)
+    return ", ".join(fields), ", ".join(groups)
+
+
 def _grouped(
-    conn: sqlite3.Connection, start: str, end: str
+    conn: sqlite3.Connection, start: str, end: str, pricing: dict
 ) -> list[dict]:
     """按 (source, model, project) 汇总区间内 token。"""
+    context_select, context_group = _pricing_context_sql(pricing)
+    context_select = f", {context_select}" if context_select else ""
+    context_group = f", {context_group}" if context_group else ""
     cur = conn.execute(
-        """
-        SELECT source, model, project,
+        f"""
+        SELECT date_local AS pricing_date, source, model, project{context_select},
                SUM(input_tokens)          AS input,
                SUM(output_tokens)         AS output,
                SUM(cache_read_tokens)     AS cache_read,
@@ -95,7 +120,7 @@ def _grouped(
                SUM(reasoning_tokens)      AS reasoning
         FROM usage_events
         WHERE date_local BETWEEN ? AND ?
-        GROUP BY source, model, project
+        GROUP BY date_local, source, model, project{context_group}
         """,
         (start, end),
     )
@@ -104,7 +129,7 @@ def _grouped(
 
 def _period_summary(conn: sqlite3.Connection, period: str, pricing: dict) -> dict:
     start, end = period_range(period)
-    rows = _grouped(conn, start, end)
+    rows = _grouped(conn, start, end, pricing)
     total = 0
     cost = 0.0
     by_source: dict[str, dict] = {}
@@ -178,7 +203,7 @@ def breakdown(
     if pricing is None:
         pricing = pricing_mod.load_pricing()
     start, end = period_range(period)
-    rows = _grouped(conn, start, end)
+    rows = _grouped(conn, start, end, pricing)
 
     # 按 (source, model) 合并
     model_map: dict[tuple, dict] = {}
@@ -238,21 +263,30 @@ def export_rows(
     if pricing is None:
         pricing = pricing_mod.load_pricing()
     start, end = period_range(period)
-    rows = _grouped(conn, start, end)
-    out = []
+    rows = _grouped(conn, start, end, pricing)
+    out_map: dict[tuple, dict] = {}
     for row in rows:
-        out.append({
+        key = (row["source"], row["model"], row["project"])
+        out = out_map.setdefault(key, {
             "source": row["source"],
             "model": row["model"],
             "project": row["project"],
-            "input": int(row["input"] or 0),
-            "output": _row_output(row),
-            "cache_read": int(row["cache_read"] or 0),
-            "cache_creation": int(row["cache_creation"] or 0),
-            "total": _row_total(row),
-            "cost_usd": round(_cost_from_row(row, pricing), 4),
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_creation": 0,
+            "total": 0,
+            "cost_usd": 0.0,
         })
-    return sorted(out, key=lambda row: row["total"], reverse=True)
+        out["input"] += int(row["input"] or 0)
+        out["output"] += _row_output(row)
+        out["cache_read"] += int(row["cache_read"] or 0)
+        out["cache_creation"] += int(row["cache_creation"] or 0)
+        out["total"] += _row_total(row)
+        out["cost_usd"] += _cost_from_row(row, pricing)
+    for row in out_map.values():
+        row["cost_usd"] = round(row["cost_usd"], 4)
+    return sorted(out_map.values(), key=lambda row: row["total"], reverse=True)
 
 
 def top_sessions(
@@ -265,9 +299,12 @@ def top_sessions(
     if pricing is None:
         pricing = pricing_mod.load_pricing()
     start, end = period_range(period)
+    context_select, context_group = _pricing_context_sql(pricing)
+    context_select = f", {context_select}" if context_select else ""
+    context_group = f", {context_group}" if context_group else ""
     cur = conn.execute(
-        """
-        SELECT session_id, source, model, project,
+        f"""
+        SELECT date_local AS pricing_date, session_id, source, model, project{context_select},
                SUM(input_tokens)          AS input,
                SUM(output_tokens)         AS output,
                SUM(cache_read_tokens)     AS cache_read,
@@ -278,7 +315,7 @@ def top_sessions(
         FROM usage_events
         WHERE date_local BETWEEN ? AND ?
           AND session_id != ''
-        GROUP BY session_id, source, model, project
+        GROUP BY date_local, session_id, source, model, project{context_group}
         """,
         (start, end),
     )
@@ -482,10 +519,13 @@ def session_detail(
     start, end = period_range(period)
     base_where = "session_id = ? AND date_local BETWEEN ? AND ?"
     params = (session_id, start, end)
+    context_select, context_group = _pricing_context_sql(pricing)
+    context_select = f", {context_select}" if context_select else ""
+    context_group = f", {context_group}" if context_group else ""
 
     rows = conn.execute(
         f"""
-        SELECT source, model, project,
+        SELECT date_local AS pricing_date, source, model, project{context_select},
                SUM(input_tokens) AS input,
                SUM(output_tokens) AS output,
                SUM(cache_read_tokens) AS cache_read,
@@ -496,13 +536,13 @@ def session_detail(
                MAX(date_local) AS last_date
         FROM usage_events
         WHERE {base_where}
-        GROUP BY source, model, project
+        GROUP BY date_local, source, model, project{context_group}
         ORDER BY SUM({_total_sql()}) DESC
         """,
         params,
     ).fetchall()
 
-    groups = []
+    group_map: dict[tuple, dict] = {}
     total = 0
     cost = 0.0
     records = 0
@@ -517,20 +557,29 @@ def session_detail(
         records += int(r["records"] or 0)
         first_date = r["first_date"] if first_date is None else min(first_date, r["first_date"])
         last_date = r["last_date"] if last_date is None else max(last_date, r["last_date"])
-        groups.append({
+        key = (r["source"], r["model"], r["project"])
+        group = group_map.setdefault(key, {
             "source": r["source"],
             "model": r["model"],
             "project": project_display(r["project"]),
             "cwd": r["project"],
-            "input": int(r["input"] or 0),
-            "output": _row_output(r),
-            "cache_read": int(r["cache_read"] or 0),
-            "cache_creation": int(r["cache_creation"] or 0),
-            "reasoning": int(r["reasoning"] or 0),
-            "total": rt,
-            "cost_usd": round(rc, 4),
-            "records": int(r["records"] or 0),
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_creation": 0,
+            "reasoning": 0,
+            "total": 0,
+            "cost_usd": 0.0,
+            "records": 0,
         })
+        group["input"] += int(r["input"] or 0)
+        group["output"] += _row_output(r)
+        group["cache_read"] += int(r["cache_read"] or 0)
+        group["cache_creation"] += int(r["cache_creation"] or 0)
+        group["reasoning"] += int(r["reasoning"] or 0)
+        group["total"] += rt
+        group["cost_usd"] += rc
+        group["records"] += int(r["records"] or 0)
 
     file_rows = conn.execute(
         f"""
@@ -545,6 +594,10 @@ def session_detail(
         """,
         params,
     ).fetchall()
+
+    groups = sorted(group_map.values(), key=lambda group: group["total"], reverse=True)
+    for group in groups:
+        group["cost_usd"] = round(group["cost_usd"], 4)
 
     return {
         "period": period,

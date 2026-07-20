@@ -166,6 +166,61 @@ class TestAggregateQueries(unittest.TestCase):
         self.assertEqual(m["total_events"], 3)
 
 
+class TestLongContextPricing(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.get_conn(":memory:")
+        db.init_db(self.conn)
+        self.pricing = {
+            "default": {"input": 1, "output": 1, "cache_read": 1, "cache_write_5m": 1},
+            "openai": {
+                "gpt-5.4": {
+                    "input": 1, "output": 1, "cache_read": 1, "cache_write_5m": 1,
+                    "long_context": {
+                        "threshold": 200_000,
+                        "input": 2,
+                        "output": 2,
+                        "cache_read": 2,
+                    },
+                }
+            },
+        }
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_request_context_is_per_record_and_null_never_uses_token_proxy(self):
+        # 两次 150K-token 的短请求不能在聚合后错误升级成长上下文；第三条虽然
+        # 本次消耗仅 10K token，但原始请求上下文为 300K，必须按长档计价。
+        recs = [
+            UsageRecord(
+                ts=_ts("2026-07-20"), source="codex", model="gpt-5.4", project="/p",
+                input_tokens=150_000, total_tokens=150_000, request_prompt_tokens=150_000, dedup_key="short-1",
+            ),
+            UsageRecord(
+                ts=_ts("2026-07-20") + 1, source="codex", model="gpt-5.4", project="/p",
+                input_tokens=150_000, total_tokens=150_000, request_prompt_tokens=150_000, dedup_key="short-2",
+            ),
+            UsageRecord(
+                ts=_ts("2026-07-20") + 2, source="codex", model="gpt-5.4", project="/p",
+                input_tokens=10_000, total_tokens=10_000, request_prompt_tokens=300_000, dedup_key="long",
+            ),
+            # 缺少单次上下文的旧 Codex 差分，即使 input 很大也保持基础档。
+            UsageRecord(
+                ts=_ts("2026-07-20") + 3, source="codex", model="gpt-5.4", project="/p",
+                input_tokens=300_000, total_tokens=300_000, dedup_key="unknown-context",
+            ),
+        ]
+        db.insert_records(self.conn, recs)
+        with patch("tokenstat.aggregate._today_local", return_value=date(2026, 7, 20)):
+            summary = aggregate.summary(self.conn, self.pricing)["periods"]["today"]
+            rows = aggregate.export_rows(self.conn, "today", self.pricing)
+
+        # (150K + 150K + 300K) * $1/M + 10K * $2/M
+        self.assertAlmostEqual(summary["cost_usd"], 0.62, places=8)
+        self.assertEqual(len(rows), 1)  # 对外导出仍保持来源/模型/项目一行
+        self.assertAlmostEqual(rows[0]["cost_usd"], 0.62, places=8)
+
+
 class TestTopSessions(unittest.TestCase):
     """回归：同 session_id 跨 source/model/project 时展示最大 token 分组的属性。"""
 

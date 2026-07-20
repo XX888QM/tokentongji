@@ -4,10 +4,10 @@
     "source_anthropic": "https://platform.claude.com/docs/en/about-claude/pricing",
     "source_openai": "https://developers.openai.com/api/docs/pricing",
     "source_deepseek": "https://api-docs.deepseek.com/quick_start/pricing",
-    "source_xai": "https://docs.x.ai/docs/models",
-    "fetched_date": "2026-06-06",
-    "verified_date": "2026-07-09",
-    "note": "订阅制(Claude Max / Codex / Grok 套餐)下，token 不直接对应扣费。此处费用按公开 API 单价折算，仅供参考。codex-auto-review 与 gpt-5-codex 按 OpenAI Codex 专项 gpt-5.3-codex 价格估算。claude-sonnet-5 按标准价 $3/$15 登记，2026-08-31 前有 $2/$10 introductory 优惠未计入。Grok cache_read 官方未单列，按 input 的 10% 估算。"
+    "source_xai": "https://docs.x.ai/developers/pricing",
+    "fetched_date": "2026-07-20",
+    "verified_date": "2026-07-20",
+    "note": "本表按官方公开 API 单价折算；订阅制（Claude Max / Codex / Grok 套餐）下 token 不直接对应扣费，仅供参考。Grok 4.5 cache_read 按 xAI 官方价格表 $0.30 登记。grok-latest 于 2026-07-20 核验为 grok-4.3。长上下文价仅在能取得单次请求完整 prompt token 数的来源启用。"
   },
   "default": { "input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write_5m": 6.25, "cache_write_1h": 10.0 },
   "anthropic": {
@@ -19,7 +19,13 @@
     "claude-opus-4-5":   { "input": 5.0,  "output": 25.0, "cache_read": 0.50, "cache_write_5m": 6.25,  "cache_write_1h": 10.0 },
     "claude-opus-4-1":   { "input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write_5m": 18.75, "cache_write_1h": 30.0 },
     "claude-opus-4-0":   { "input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write_5m": 18.75, "cache_write_1h": 30.0 },
-    "claude-sonnet-5":   { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
+    "claude-sonnet-5":   {
+      "input": 2.0, "output": 10.0, "cache_read": 0.20, "cache_write_5m": 2.50, "cache_write_1h": 4.0,
+      "next_pricing": {
+        "starts_on": "2026-09-01",
+        "input": 3.0, "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75, "cache_write_1h": 6.0
+      }
+    },
     "claude-sonnet-4-6": { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
     "claude-sonnet-4-5": { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
     "claude-sonnet-4-0": { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
@@ -27,31 +33,81 @@
   },
   "deepseek": {
     "deepseek-v4-pro":   { "input": 0.435, "output": 0.87,  "cache_read": 0.003625, "cache_write_5m": null, "cache_write_1h": null },
-    "deepseek-v4-flash": { "input": 0.14,  "output": 0.28,  "cache_read": 0.0028,   "cache_write_5m": null, "cache_write_1h": null }
+    "deepseek-v4-flash": { "input": 0.14,  "output": 0.28,  "cache_read": 0.0028,   "cache_write_5m": null, "cache_write_1h": null },
+    "deepseek-chat":     { "input": 0.14,  "output": 0.28,  "cache_read": 0.0028,   "cache_write_5m": null, "cache_write_1h": null },
+    "deepseek-reasoner": { "input": 0.14,  "output": 0.28,  "cache_read": 0.0028,   "cache_write_5m": null, "cache_write_1h": null }
   },
   "local": {
     "gemma4:26b":        { "input": 0.0, "output": 0.0, "cache_read": 0.0, "cache_write_5m": null, "cache_write_1h": null }
   },
   "xai": {
-    "grok-4.5":                 { "input": 2.0,  "output": 6.0,  "cache_read": 0.20,  "cache_write_5m": null, "cache_write_1h": null },
-    "grok-4.3":                 { "input": 1.25, "output": 2.50, "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null },
-    "grok-4.20-0309-reasoning": { "input": 1.25, "output": 2.50, "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null },
-    "grok-4.20-0309-non-reasoning": { "input": 1.25, "output": 2.50, "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null },
-    "grok-build-0.1":           { "input": 1.0,  "output": 2.0,  "cache_read": 0.10,  "cache_write_5m": null, "cache_write_1h": null }
+    "grok-4.5": {
+      "input": 2.0, "output": 6.0, "cache_read": 0.30, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 200000, "input": 4.0, "output": 12.0, "cache_read": 0.60 }
+    },
+    "grok-4.3": {
+      "input": 1.25, "output": 2.50, "cache_read": 0.20, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 200000, "input": 2.50, "output": 5.0, "cache_read": 0.40 }
+    },
+    "grok-4.20-0309-reasoning": {
+      "input": 1.25, "output": 2.50, "cache_read": 0.20, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 200000, "input": 2.50, "output": 5.0, "cache_read": 0.40 }
+    },
+    "grok-4.20-0309-non-reasoning": {
+      "input": 1.25, "output": 2.50, "cache_read": 0.20, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 200000, "input": 2.50, "output": 5.0, "cache_read": 0.40 }
+    },
+    "grok-4.20-multi-agent-0309": {
+      "input": 1.25, "output": 2.50, "cache_read": 0.20, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 200000, "input": 2.50, "output": 5.0, "cache_read": 0.40 }
+    },
+    "grok-build-0.1": {
+      "input": 1.0, "output": 2.0, "cache_read": 0.20, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 200000, "input": 2.0, "output": 4.0, "cache_read": 0.40 }
+    },
+    "grok-code-fast-1": {
+      "input": 1.0, "output": 2.0, "cache_read": 0.20, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 200000, "input": 2.0, "output": 4.0, "cache_read": 0.40 }
+    },
+    "grok-latest": {
+      "input": 1.25, "output": 2.50, "cache_read": 0.20, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 200000, "input": 2.50, "output": 5.0, "cache_read": 0.40 }
+    }
   },
   "openai": {
-    "gpt-5.6-sol":       { "input": 5.0,  "output": 30.0,  "cache_read": 0.50,  "cache_write_5m": null, "cache_write_1h": null },
-    "gpt-5.6-terra":     { "input": 2.50, "output": 15.0,  "cache_read": 0.25,  "cache_write_5m": null, "cache_write_1h": null },
-    "gpt-5.6-luna":      { "input": 1.0,  "output": 6.0,   "cache_read": 0.10,  "cache_write_5m": null, "cache_write_1h": null },
-    "gpt-5.5":           { "input": 5.0,  "output": 30.0,  "cache_read": 0.50,  "cache_write_5m": null, "cache_write_1h": null },
-    "gpt-5.5-pro":       { "input": 30.0, "output": 180.0, "cache_read": null,  "cache_write_5m": null, "cache_write_1h": null },
-    "gpt-5.4":           { "input": 2.50, "output": 15.0,  "cache_read": 0.25,  "cache_write_5m": null, "cache_write_1h": null },
-    "gpt-5.4-pro":       { "input": 30.0, "output": 180.0, "cache_read": null,  "cache_write_5m": null, "cache_write_1h": null },
+    "gpt-5.6-sol": {
+      "input": 5.0, "output": 30.0, "cache_read": 0.50, "cache_write_5m": null, "cache_write_1h": null, "cache_write_30m": 6.25,
+      "long_context": { "threshold": 272000, "input": 10.0, "output": 45.0, "cache_read": 1.0, "cache_write_30m": 12.50 }
+    },
+    "gpt-5.6-terra": {
+      "input": 2.50, "output": 15.0, "cache_read": 0.25, "cache_write_5m": null, "cache_write_1h": null, "cache_write_30m": 3.125,
+      "long_context": { "threshold": 272000, "input": 5.0, "output": 22.50, "cache_read": 0.50, "cache_write_30m": 6.25 }
+    },
+    "gpt-5.6-luna": {
+      "input": 1.0, "output": 6.0, "cache_read": 0.10, "cache_write_5m": null, "cache_write_1h": null, "cache_write_30m": 1.25,
+      "long_context": { "threshold": 272000, "input": 2.0, "output": 9.0, "cache_read": 0.20, "cache_write_30m": 2.50 }
+    },
+    "gpt-5.5": {
+      "input": 5.0, "output": 30.0, "cache_read": 0.50, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 272000, "input": 10.0, "output": 45.0, "cache_read": 1.0 }
+    },
+    "gpt-5.5-pro": {
+      "input": 30.0, "output": 180.0, "cache_read": 30.0, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 272000, "input": 60.0, "output": 270.0, "cache_read": 60.0 }
+    },
+    "gpt-5.4": {
+      "input": 2.50, "output": 15.0, "cache_read": 0.25, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 272000, "input": 5.0, "output": 22.50, "cache_read": 0.50 }
+    },
+    "gpt-5.4-pro": {
+      "input": 30.0, "output": 180.0, "cache_read": 30.0, "cache_write_5m": null, "cache_write_1h": null,
+      "long_context": { "threshold": 272000, "input": 60.0, "output": 270.0, "cache_read": 60.0 }
+    },
     "gpt-5.4-mini":      { "input": 0.75, "output": 4.50,  "cache_read": 0.075, "cache_write_5m": null, "cache_write_1h": null },
     "gpt-5.4-nano":      { "input": 0.20, "output": 1.25,  "cache_read": 0.02,  "cache_write_5m": null, "cache_write_1h": null },
     "gpt-5.3-codex":     { "input": 1.75, "output": 14.0,  "cache_read": 0.175, "cache_write_5m": null, "cache_write_1h": null },
     "gpt-5":             { "input": 1.25, "output": 10.0,  "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null },
-    "gpt-5-codex":       { "input": 1.75, "output": 14.0,  "cache_read": 0.175, "cache_write_5m": null, "cache_write_1h": null },
+    "gpt-5-codex":       { "input": 1.25, "output": 10.0,  "cache_read": 0.125, "cache_write_5m": null, "cache_write_1h": null },
     "codex-auto-review": { "input": 1.75, "output": 14.0,  "cache_read": 0.175, "cache_write_5m": null, "cache_write_1h": null }
   }
 }

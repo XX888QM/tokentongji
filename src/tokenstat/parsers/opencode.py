@@ -127,6 +127,7 @@ def _parse_row(row: sqlite3.Row, db_path: Path) -> Optional[UsageRecord]:
         cache_creation_tokens=cache_creation_tokens,
         reasoning_tokens=reasoning_tokens,
         total_tokens=total_tokens,
+        request_prompt_tokens=input_tokens + cache_read_tokens,
         session_id=session_id,
         source_file=str(db_path),
         pos=0,
