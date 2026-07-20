@@ -34,6 +34,24 @@ def _open_ro(db_path: Path) -> Optional[sqlite3.Connection]:
         return None
 
 
+def latest_activity_ts(db_path: Path) -> Optional[int]:
+    """返回最新消息时间；用于来源新鲜度，不改变累计 token 的归档日期。"""
+    conn = _open_ro(db_path)
+    if conn is None:
+        return None
+    try:
+        row = conn.execute("SELECT MAX(timestamp) AS ts FROM messages").fetchone()
+    except sqlite3.DatabaseError:
+        return None
+    finally:
+        conn.close()
+    try:
+        ts = int(float(row["ts"] or 0))
+    except (TypeError, ValueError):
+        return None
+    return ts if ts > 0 else None
+
+
 def fetch_records(db_path: Path) -> List[UsageRecord]:
     """全量重扫 sessions 表；调用方靠 dedup_key + on_conflict='max' 保证幂等。"""
     conn = _open_ro(db_path)

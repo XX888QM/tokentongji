@@ -364,7 +364,11 @@ def top_sessions(
     return {"period": period, "sessions": result}
 
 
-def audit(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
+def audit(
+    conn: sqlite3.Connection,
+    pricing: Optional[dict] = None,
+    activity_dates: Optional[dict[str, str]] = None,
+) -> dict:
     """审计数据完整性与统计口径风险。"""
     if pricing is None:
         pricing = pricing_mod.load_pricing()
@@ -382,16 +386,19 @@ def audit(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
         ORDER BY source
         """
     ).fetchall()
-    sources = [
-        {
+    activity_dates = activity_dates or {}
+    sources = []
+    for row in source_rows:
+        last_date = row["last_date"]
+        sources.append({
             "source": row["source"],
             "records": int(row["records"] or 0),
             "total": int(row["total"] or 0),
             "first_date": row["first_date"],
-            "last_date": row["last_date"],
-        }
-        for row in source_rows
-    ]
+            "last_date": last_date,
+            # 累计会话来源可有“最近活动”而无新的 token 归档日；两者不能混写。
+            "activity_last_date": activity_dates.get(row["source"], last_date),
+        })
 
     state = conn.execute(
         """
@@ -455,9 +462,9 @@ def audit(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
             issues.append({"level": "warn", "message": f"暂无 {expected} 数据"})
 
     # 同时检查绝对新鲜度与来源间相对落后，避免所有采集一起停摆时仍显示正常。
-    dated = [s for s in sources if s["records"] and s["last_date"]]
+    dated = [s for s in sources if s["records"] and s["activity_last_date"]]
     if dated:
-        newest = max(s["last_date"] for s in dated)
+        newest = max(s["activity_last_date"] for s in dated)
         newest_d = date.fromisoformat(newest)
         overall_lag = (_today_local() - newest_d).days
         if overall_lag >= config.STALE_SOURCE_DAYS:
@@ -466,11 +473,11 @@ def audit(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
                 "message": f"全部来源已 {overall_lag} 天无新数据（最新 {newest}）",
             })
         for s in dated:
-            lag = (newest_d - date.fromisoformat(s["last_date"])).days
+            lag = (newest_d - date.fromisoformat(s["activity_last_date"])).days
             if lag >= config.STALE_SOURCE_DAYS:
                 issues.append({
                     "level": "warn",
-                    "message": f"{s['source']} 已 {lag} 天无新数据（最后 {s['last_date']}）",
+                    "message": f"{s['source']} 已 {lag} 天无新数据（最后 {s['activity_last_date']}）",
                 })
     if not state["files"]:
         issues.append({"level": "warn", "message": "暂无 ingest_state，可能还没完成首次入库"})

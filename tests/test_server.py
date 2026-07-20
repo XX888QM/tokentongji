@@ -4,6 +4,7 @@ import json
 import tempfile
 import time
 import unittest
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
@@ -126,6 +127,33 @@ class TestDailyEndpointFallback(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertIn("status", body)
         self.assertIn("db", body)
+
+    def test_health_uses_hermes_message_activity_for_staleness(self):
+        conn = db.get_conn(self._db_path)
+        try:
+            today = datetime.now(tz=server._LOCAL_TZ).date()
+            base = int(datetime(today.year, today.month, today.day, tzinfo=server._LOCAL_TZ).timestamp())
+            db.insert_records(conn, [
+                UsageRecord(ts=base, source="claude", model="known", project="/a",
+                            input_tokens=1, total_tokens=1, dedup_key="fresh-claude"),
+                UsageRecord(ts=base, source="codex", model="known", project="/b",
+                            input_tokens=1, total_tokens=1, dedup_key="fresh-codex"),
+                UsageRecord(ts=base - 14 * 86400, source="hermes", model="known", project="/h",
+                            input_tokens=1, total_tokens=1, dedup_key="old-hermes"),
+            ])
+        finally:
+            conn.close()
+        with patch("tokenstat.aggregate._today_local", return_value=today):
+            with patch("tokenstat.server.hermes_parser.latest_activity_ts", return_value=base):
+                code, body = _call_get("/api/health", self._db_path)
+                audit_code, audit = _call_get("/api/audit", self._db_path)
+        self.assertEqual(code, 200)
+        hermes = next(source for source in body["sources"] if source["source"] == "hermes")
+        self.assertEqual(hermes["activity_last_date"], today.isoformat())
+        self.assertNotIn("hermes 已", " ".join(i["message"] for i in body["issues"]))
+        self.assertEqual(audit_code, 200)
+        audit_hermes = next(source for source in audit["sources"] if source["source"] == "hermes")
+        self.assertEqual(audit_hermes["collection"]["state"], "active")
 
     def test_insights_endpoint_returns_200(self):
         code, body = _call_get("/api/insights", self._db_path)

@@ -22,6 +22,7 @@ import traceback
 from . import aggregate, config, db
 from . import pricing as pricing_mod
 from .models import _LOCAL_TZ
+from .parsers import hermes as hermes_parser
 
 # ---- 汇率缓存（1小时 TTL，HTTP 请求只读缓存，外部刷新走后台线程） ----
 _RATE_CACHE: dict = {"rate": 7.25, "ts": 0.0, "refreshing": False}
@@ -171,6 +172,23 @@ def _source_collection_status(source: str, has_path: bool, last_date: str | None
     return {"state": "active", "message": "路径正常，近期已采集"}
 
 
+def _source_activity_dates() -> dict[str, str]:
+    """补充累计会话来源的最近活动日，不能拿它替代 token 归档日。"""
+    ts = hermes_parser.latest_activity_ts(config.HERMES_STATE_DB)
+    if not ts:
+        return {}
+    return {"hermes": datetime.fromtimestamp(ts, tz=_LOCAL_TZ).date().isoformat()}
+
+
+def _load_audit() -> dict:
+    pricing = pricing_mod.load_pricing()
+    conn = db.get_conn(config.DB_PATH)
+    try:
+        return aggregate.audit(conn, pricing, activity_dates=_source_activity_dates())
+    finally:
+        conn.close()
+
+
 class Handler(BaseHTTPRequestHandler):
     # 静音默认日志（避免刷屏），错误仍打印
     def log_message(self, fmt, *args):  # noqa: N802
@@ -309,12 +327,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(data)
 
     def _api_audit(self):
-        pricing = pricing_mod.load_pricing()
-        conn = self._conn()
-        try:
-            data = aggregate.audit(conn, pricing)
-        finally:
-            conn.close()
+        data = _load_audit()
         data["generated_at"] = _now_local_str()
         data["db"] = _db_status()
         data["data_sources"] = {
@@ -334,20 +347,20 @@ class Handler(BaseHTTPRequestHandler):
             "grok": data["data_sources"]["grok"]["exists"],
         }
         for source in data["sources"]:
+            activity_date = source.get("activity_last_date") or source.get("last_date")
             source["collection"] = _source_collection_status(
-                source["source"], path_available.get(source["source"], False), source.get("last_date")
+                source["source"], path_available.get(source["source"], False), activity_date
             )
+            if source["source"] == "hermes" and activity_date != source.get("last_date"):
+                source["collection"]["message"] = (
+                    f"最近消息 {activity_date}；累计 token 仍按会话开始日归档"
+                )
         data["runtime"] = _ingest_runtime()
         data["retention_note"] = "已入库数据独立保存在本机 SQLite；删除原始日志不会删除历史统计。"
         self._send_json(data)
 
     def _api_health(self):
-        pricing = pricing_mod.load_pricing()
-        conn = self._conn()
-        try:
-            audit = aggregate.audit(conn, pricing)
-        finally:
-            conn.close()
+        audit = _load_audit()
         payload = {
             "status": audit["status"],
             "generated_at": _now_local_str(),

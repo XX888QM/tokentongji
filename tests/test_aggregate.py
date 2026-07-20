@@ -414,6 +414,29 @@ class TestStaleSourceDetection(unittest.TestCase):
         msgs = " ".join(i["message"] for i in a["issues"])
         self.assertNotIn("无新数据", msgs)  # 差 1 天 < 阈值 3
 
+    def test_activity_date_overrides_stale_check_without_moving_token_date(self):
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-20"), source="claude", model="known",
+                            project="/tmp/a", input_tokens=10, total_tokens=10, dedup_key="fresh-c"),
+                UsageRecord(ts=_ts("2026-06-20"), source="codex", model="known",
+                            project="/tmp/b", input_tokens=10, total_tokens=10, dedup_key="fresh-x"),
+                UsageRecord(ts=_ts("2026-06-06"), source="hermes", model="known",
+                            project="/tmp/h", input_tokens=10, total_tokens=10, dedup_key="old-h"),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 20)):
+                a = aggregate.audit(
+                    conn, self._pricing(), activity_dates={"hermes": "2026-06-20"}
+                )
+        finally:
+            conn.close()
+        hermes = next(source for source in a["sources"] if source["source"] == "hermes")
+        self.assertEqual(hermes["last_date"], "2026-06-06")
+        self.assertEqual(hermes["activity_last_date"], "2026-06-20")
+        self.assertNotIn("hermes 已", " ".join(i["message"] for i in a["issues"]))
+
     def test_all_sources_stale_against_today_warns(self):
         conn = db.get_conn(":memory:")
         try:

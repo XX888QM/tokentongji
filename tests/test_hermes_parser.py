@@ -96,6 +96,18 @@ class TestHermesParser(unittest.TestCase):
         r = hermes.fetch_records(self.db)[0]
         self.assertEqual(r.source_file, str(self.db))
 
+    def test_latest_activity_uses_messages_not_session_start(self):
+        _make_db(self.db, [{"id": "old", "model": "gpt-5.5", "started_at": 1700000000,
+                            "input_tokens": 10, "output_tokens": 5}])
+        conn = sqlite3.connect(str(self.db))
+        try:
+            conn.execute("CREATE TABLE messages (timestamp REAL)")
+            conn.executemany("INSERT INTO messages VALUES (?)", [(1700000100.5,), (1700000200.5,)])
+            conn.commit()
+        finally:
+            conn.close()
+        self.assertEqual(hermes.latest_activity_ts(self.db), 1700000200)
+
 
 if __name__ == "__main__":
     unittest.main()
