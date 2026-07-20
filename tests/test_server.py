@@ -4,6 +4,7 @@ import json
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
@@ -32,6 +33,23 @@ def _call_get(path: str, db_path: str) -> tuple[int, dict]:
 
     body = json.loads(response_body.getvalue()) if response_body.getvalue() else {}
     return response_code[0], body
+
+
+def _call_get_bytes(path: str, db_path: str) -> tuple[int, bytes]:
+    """模拟一次非 JSON GET（CSV 导出）。"""
+    response_code = [None]
+    response_body = io.BytesIO()
+    with patch("tokenstat.server.config.DB_PATH", db_path):
+        with patch.object(Handler, "__init__", lambda *a, **kw: None):
+            handler = Handler.__new__(Handler)
+        handler.path = path
+        handler.wfile = response_body
+        handler.send_response = lambda code, msg=None: response_code.__setitem__(0, code)
+        handler.send_header = lambda k, v: None
+        handler.end_headers = lambda: None
+        handler.send_error = lambda code, msg=None: response_code.__setitem__(0, code)
+        handler.do_GET()
+    return response_code[0], response_body.getvalue()
 
 
 def _call_post(
@@ -154,6 +172,40 @@ class TestDailyEndpointFallback(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(body["session_id"], "sid-ok")
         self.assertEqual(body["summary"]["total"], 10)
+
+    def test_export_endpoint_returns_current_period_csv(self):
+        conn = db.get_conn(self._db_path)
+        try:
+            db.insert_records(conn, [
+                UsageRecord(ts=int(time.time()), source="codex", model="gpt-5.5",
+                            project="/tmp/proj", input_tokens=10, total_tokens=10,
+                            dedup_key="export-1")
+            ])
+        finally:
+            conn.close()
+        code, body = _call_get_bytes("/api/export?period=today", self._db_path)
+        self.assertEqual(code, 200)
+        self.assertIn(b"source,model,project", body)
+        self.assertIn(b"codex,gpt-5.5,/tmp/proj", body)
+
+    def test_ingest_endpoint_requires_its_own_action_header(self):
+        code, body = _call_post("/api/ingest", self._db_path, {}, headers={"X-Tokenstat-Action": "notify"})
+        self.assertEqual(code, 403)
+        self.assertEqual(body["error"], "missing action header")
+
+    def test_ingest_endpoint_starts_single_background_check(self):
+        with patch("tokenstat.server._start_ingest", return_value=True) as start:
+            code, body = _call_post("/api/ingest", self._db_path, {}, headers={"X-Tokenstat-Action": "ingest"})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["started"])
+        start.assert_called_once()
+
+    def test_backup_endpoint_creates_a_separate_database_file(self):
+        with patch("tokenstat.server.config.DATA_DIR", Path(self._tmpdir.name)):
+            code, body = _call_post("/api/backup", self._db_path, {}, headers={"X-Tokenstat-Action": "backup"})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["file"].endswith(".db"))
+        self.assertTrue((Path(self._tmpdir.name) / "backups" / body["file"]).is_file())
 
     def test_get_notify_is_not_allowed(self):
         code, _body = _call_get("/api/notify?kind=alert&message=x", self._db_path)

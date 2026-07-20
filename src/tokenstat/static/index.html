@@ -26,6 +26,7 @@
       <div class="header-meta">
         <span class="live" id="liveStatus" aria-live="polite">连接中</span>
         <span id="meta">加载中…</span>
+        <span id="maintenanceStatus" aria-live="polite"></span>
       </div>
       <button class="btn-ghost" id="settingsButton" type="button" onclick="toggleSettings()">告警设置</button>
     </div>
@@ -64,7 +65,11 @@
         <span class="section-index">01</span>
         <div><span class="eyebrow">SYSTEM INTEGRITY</span><h2>运行审计</h2></div>
       </div>
-      <span class="status-pill" id="auditStatus">检查中</span>
+      <div class="panel-tools">
+        <button class="mini-btn" id="ingestNow" type="button">立即核对</button>
+        <button class="mini-btn" id="backupNow" type="button">备份数据库</button>
+        <span class="status-pill" id="auditStatus">检查中</span>
+      </div>
     </div>
     <div class="audit-grid">
       <div class="audit-block"><h3>数据源</h3><div id="auditSources"></div></div>
@@ -98,6 +103,7 @@
         <button data-period="month">本月</button>
         <button data-period="all">累计</button>
       </div>
+      <button class="mini-btn" id="exportCsv" type="button">导出当前 CSV</button>
     </div>
     <div class="tables">
       <div class="table-block">

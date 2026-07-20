@@ -211,6 +211,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   box-shadow: inset 0 1px 0 rgba(255,255,255,.018);
 }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 21px; }
+.panel-tools { display: flex; align-items: center; gap: 9px; }
 .section-title { display: flex; align-items: center; gap: 15px; }
 .section-index { display: grid; place-items: center; width: 29px; height: 29px; border: 1px solid rgba(120,220,232,.3); color: var(--signal); letter-spacing: 0; }
 .section-title .eyebrow { display: block; margin-bottom: 5px; color: var(--dim); font-size: 10px; }
@@ -254,6 +255,7 @@ tfoot tr.tfoot-total td { border-top: 1px solid rgba(230,199,122,.35); border-bo
 .pager-btn:hover:not(:disabled),
 .mini-btn:hover { color: var(--gold); border-color: rgba(230,199,122,.4); }
 .pager-btn:disabled { opacity: .3; cursor: default; }
+.mini-btn:disabled { opacity: .3; cursor: wait; }
 .pager-info { color: var(--dim); font: 500 14px/1 var(--number-font); }
 
 /* Audit and insights */

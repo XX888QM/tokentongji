@@ -14,7 +14,10 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // GET /api/top_sessions?period=&limit=  -> { period, sessions:[...] }
 // GET /api/session_detail?...      -> { summary, groups, source_files }
 // GET /api/rates                   -> { usd_cny }
+// GET /api/export?period=...       -> 当前周期的来源/模型/项目 CSV
 // POST /api/notify {kind,message}  -> { ok } （本机桌面通知）
+// POST /api/ingest                 -> { ok, started, runtime }（本机立即核对）
+// POST /api/backup                 -> { ok, file }（本机数据库备份）
 // ===============================================================
 
 let dailyChart = null;
@@ -187,10 +190,10 @@ async function getJSON(url) {
   return res.json();
 }
 
-async function postJSON(url, payload) {
+async function postJSON(url, payload, action = 'notify') {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Tokenstat-Action': 'notify' },
+    headers: { 'Content-Type': 'application/json', 'X-Tokenstat-Action': action },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
@@ -375,7 +378,15 @@ async function loadAudit() {
   status.className = 'status-pill ' + (a.status || 'ok');
   const sources = [];
   for (const s of (a.sources || [])) {
-    sources.push(kv(s.source, `${fmtCN(s.total)} / ${fmt(s.records)} 条`));
+    const collection = s.collection || {};
+    const stateLabel = {
+      active: '近期已采集', idle: '近期无新增', missing: '路径缺失', waiting: '等待数据',
+    }[collection.state] || '状态未知';
+    sources.push(kv(
+      s.source,
+      `${fmtCN(s.total)} / ${fmt(s.records)} 条 · ${stateLabel}`,
+      collection.message || '未获取采集路径状态',
+    ));
   }
   document.getElementById('auditSources').innerHTML =
     sources.join('') || '<div class="empty">暂无数据源记录</div>';
@@ -385,12 +396,50 @@ async function loadAudit() {
     kv('日期范围', (a.meta?.date_range || []).filter(Boolean).join(' → ') || '暂无') +
     kv('跟踪文件', fmt(ingest.files || 0)) +
     kv('最近入库', ingest.latest_mtime_local || '暂无') +
+    kv('后台核对', a.runtime?.running ? '正在核对' : (a.runtime?.last_finished || '等待首次核对')) +
+    kv('历史保留', '原日志删后仍保留', a.retention_note || '') +
+    kv('最近备份', a.db?.latest_backup_at || '尚未备份', a.db?.latest_backup || '') +
     kv('DB 大小', fmtCN(a.db?.size_bytes || 0) + 'B', fmt(a.db?.size_bytes || 0) + ' bytes');
   const issueHtml = (a.issues || []).map(issueBadge).join('');
   const unknown = (a.unknown_models || []).slice(0, 5)
     .map((m) => `<div class="issue warn">未知模型：${esc(modelDisplay(m))}</div>`).join('');
   document.getElementById('auditIssues').innerHTML =
     issueHtml + unknown || '<div class="issue ok">未发现明显口径风险</div>';
+  setMaintenanceStatus(a.runtime);
+}
+
+function setMaintenanceStatus(runtime = {}, message = '') {
+  const target = document.getElementById('maintenanceStatus');
+  if (!target) return;
+  target.textContent = message || (runtime.running ? '正在核对数据…' : '');
+  const button = document.getElementById('ingestNow');
+  if (button) button.disabled = !!runtime.running;
+}
+
+async function requestIngest() {
+  setMaintenanceStatus({}, '正在启动核对…');
+  try {
+    const result = await postJSON('/api/ingest', {}, 'ingest');
+    setMaintenanceStatus(result.runtime || {}, result.started ? '正在核对数据…' : '已有核对正在进行');
+    window.setTimeout(refreshAll, 1200);
+  } catch (e) {
+    setMaintenanceStatus({}, `核对失败：${e.message}`);
+  }
+}
+
+async function backupDatabase() {
+  setMaintenanceStatus({}, '正在备份数据库…');
+  try {
+    const result = await postJSON('/api/backup', {}, 'backup');
+    setMaintenanceStatus({}, `备份完成：${result.file}`);
+    await loadAudit();
+  } catch (e) {
+    setMaintenanceStatus({}, `备份失败：${e.message}`);
+  }
+}
+
+function exportCurrentPeriod() {
+  window.location.assign(`/api/export?period=${encodeURIComponent(currentPeriod)}`);
 }
 
 async function loadInsights() {
@@ -603,6 +652,12 @@ function setupTopSessionDrilldown() {
   });
 }
 
+function setupMaintenanceActions() {
+  document.getElementById('ingestNow').addEventListener('click', requestIngest);
+  document.getElementById('backupNow').addEventListener('click', backupDatabase);
+  document.getElementById('exportCsv').addEventListener('click', exportCurrentPeriod);
+}
+
 async function loadRates() {
   try {
     const r = await getJSON('/api/rates');
@@ -614,6 +669,7 @@ async function main() {
   setupPeriodToggle();
   setupTopSessionDrilldown();
   setupSettingsInteractions();
+  setupMaintenanceActions();
   await loadRates();
   const sec = await refreshAll();
   if (refreshTimer) clearInterval(refreshTimer);

@@ -6,7 +6,8 @@ LABEL="com.tokentongji"
 PLIST_DST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 
 if [ -f "$PLIST_DST" ]; then
-    launchctl unload -w "$PLIST_DST" 2>/dev/null || true
+    USER_ID="$(id -u)"
+    launchctl bootout "gui/${USER_ID}/${LABEL}" 2>/dev/null || true
     rm -f "$PLIST_DST"
     echo "已卸载：$PLIST_DST"
 else

@@ -74,6 +74,9 @@ const data = (id) => ({ session_id:id, summary:{}, groups:[], source_files:[] })
         self.assertIn('for="alertCost"', html)
         self.assertIn('for="alertTokens"', html)
         self.assertIn('for="desktopNotify"', html)
+        self.assertIn('id="ingestNow"', html)
+        self.assertIn('id="backupNow"', html)
+        self.assertIn('id="exportCsv"', html)
         self.assertNotIn('name="viewport"', html)
 
     def test_night_ledger_visual_contract(self):
@@ -133,6 +136,8 @@ console.log(chartTooltipTotal([
         self.assertIn("aria-pressed", source)
         self.assertIn("e.key === 'Escape'", source)
         self.assertIn("settingsButton", source)
+        self.assertIn("/api/export?period=", source)
+        self.assertIn("setupMaintenanceActions", source)
 
 
 if __name__ == "__main__":

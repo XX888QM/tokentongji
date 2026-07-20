@@ -23,7 +23,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 PYTHONPATH=src python3 -m unittest tests.test_pricing
 PYTHONPATH=src python3 -m unittest tests.test_pricing.TestNormalization.test_sonnet_5
 
-# 开机自启（launchd）—见下方"已知问题"，本机当前禁用，改手动启动
+# 开机自启（launchd）—安装后用 launchctl print 确认服务已注册
 bash scripts/install-launchd.sh
 bash scripts/uninstall-launchd.sh
 ```
@@ -47,7 +47,7 @@ bash scripts/uninstall-launchd.sh
 - **`db.py`** — 唯一持久化层，WAL 模式，每次操作开独立连接（sqlite3 连接开销很低，用这个规避跨线程共享连接的坑）。`usage_events.dedup_key` 唯一约束是幂等入库的关键。
 - **`pricing.py` + `pricing.json`** — model 名归一化（剥离区域前缀/后缀）→ 精确匹配 → 最长前缀匹配 → 家族兜底（`_family_rates()`，同系列新版本未命中时退到该系列已知最新价）→ default。**新模型上线时**要同步改两处：`pricing.json` 加价目条目，以及对应 family 的 `_family_rates()` 里 `pick()` 参数顺序（最新版本放最前面），否则未来的新版本会退到旧价格而不是最新价格。未知 model 会被记录到 `_UNKNOWN_MODELS`（fail-loud，不静默按 0 计费）。分区含 `anthropic` / `openai` / `deepseek` / `xai` / `local`。
 - **`aggregate.py`** — 所有仪表盘用到的聚合都在这，一律按 `date_local`（Asia/Shanghai 本地日）分桶。`audit()` 同时检查最新来源距今天的绝对陈旧天数，以及单个来源落后最新来源的相对天数，避免全部采集一起停摆时假绿。
-- **`server.py`** — 单进程 `ThreadingHTTPServer`：主线程处理 HTTP 请求，后台 daemon 线程按 `TOKENSTAT_INGEST_INTERVAL` 定时增量 ingest。汇率 API 只同步返回缓存值，外部 USD→CNY 请求由单个后台线程刷新，不能重新放回 HTTP 请求链阻塞首屏。API 路由手写分发在 `do_GET`/`do_POST` 里，没有框架。`/api/notify` 仅接受本机请求 + 自定义 header + 白名单 kind，用于触发 osascript 桌面通知，改这块要留意命令注入面（当前对 message 做了转义 + 长度截断）。
+- **`server.py`** — 单进程 `ThreadingHTTPServer`：主线程处理 HTTP 请求，后台 daemon 线程按 `TOKENSTAT_INGEST_INTERVAL` 定时增量 ingest。汇率 API 只同步返回缓存值，外部 USD→CNY 请求由单个后台线程刷新，不能重新放回 HTTP 请求链阻塞首屏。API 路由手写分发在 `do_GET`/`do_POST` 里，没有框架。`/api/notify`、`/api/ingest`、`/api/backup` 都仅接受本机请求 + 对应自定义 header；手动核对和后台核对共用锁，不能并发写库。CSV 导出使用 `/api/export`，不改库。
 - **桌面视觉系统**：`static/` 采用 Night Ledger × Signal Room 方向。暖金只表示金额/核心总量，冷青表示运行状态；标题、正文和数字统一使用系统字体（macOS 苹方优先），正文基准字号 15px，统计表格 16px，审计、图表和辅助信息不低于 13px，数字仅用 `tabular-nums` 对齐。页面最小宽度 1180px，不添加 viewport、移动端媒体查询或外部字体依赖。顶部区段导航、周期记忆、健康状态联动和设置弹窗键盘操作属于既定用户体验，不要在样式重构时删掉。
 
 ## 关键约定
@@ -55,4 +55,4 @@ bash scripts/uninstall-launchd.sh
 - **Token 归一化口径**：`input_tokens` 是已剔除缓存命中的全价输入；`cache_read_tokens`/`cache_creation_tokens` 分开算；reasoning token 是否并入 output 因来源而异（Codex / Grok / Hermes 已是 output 子集，不重复相加；OpenCode 单独存字段，只在展示/计费时并入，见 `aggregate._row_output`）。改计费或展示逻辑前先确认没有破坏这个口径。
 - **时区固定 Asia/Shanghai**（UTC+8，无夏令时）。`models.py` 里同时实现了 zoneinfo 优先 + 固定偏移兜底两套，保证在缺 tzdata 的环境也能零依赖运行。
 - **费用是参考估算，不是真实扣费**——订阅制（Claude Max / Codex / Grok 套餐）下 token 不直接对应扣费，改 UI 文案时不要弱化这个免责声明。
-- **launchd 开机自启在当前 macOS 版本上有已知的 KeepAlive 复活失效问题**：首次 `bootstrap` 能跑起来，但进程退出后不会自动重启，且无诊断日志可查。目前采用手动启动（见上方 Commands），`launchd/` 目录下的文件保留但不是默认使用路径。
+- **历史保留与备份**：原始日志只用于新增采集；已经写入 `data/tokenstat.db` 的历史记录不会因日志删除而自动清除。页面备份会复制到 `data/backups/`，重建或清理前先备份。`launchd` 安装脚本用 `bootstrap` / `kickstart` 并立即 `print` 注册状态；若服务未注册，优先查看 `data/tokenstat.err.log`。

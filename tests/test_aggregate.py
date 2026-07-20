@@ -84,6 +84,12 @@ class TestAggregateQueries(unittest.TestCase):
         self.assertIn("projA", names)
         self.assertIn("projB", names)
 
+    def test_export_rows_are_granular_and_do_not_double_count(self):
+        rows = aggregate.export_rows(self.conn, "today", self.pricing)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(sum(row["total"] for row in rows), 3_600_000)
+        self.assertEqual(rows[0]["model"], "claude-sonnet-4-6")
+
     def test_daily_includes_today(self):
         d = aggregate.daily(self.conn, days=7)
         self.assertEqual(len(d["days"]), 7)

@@ -73,6 +73,18 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def backup_database(source: Path, destination: Path) -> None:
+    """在线备份 SQLite 数据库；原库保持可读写，备份文件由调用方命名。"""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source_conn = sqlite3.connect(str(source))
+    destination_conn = sqlite3.connect(str(destination))
+    try:
+        source_conn.backup(destination_conn)
+    finally:
+        destination_conn.close()
+        source_conn.close()
+
+
 def _row_tuple(r: UsageRecord) -> tuple:
     return (
         r.ts,

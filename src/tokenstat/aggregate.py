@@ -231,6 +231,30 @@ def breakdown(
     return {"period": period, "by_model": by_model, "by_project": by_project}
 
 
+def export_rows(
+    conn: sqlite3.Connection, period: str, pricing: Optional[dict] = None
+) -> list[dict]:
+    """导出当前周期的最细分组（来源/模型/项目），避免项目表与模型表双重合计。"""
+    if pricing is None:
+        pricing = pricing_mod.load_pricing()
+    start, end = period_range(period)
+    rows = _grouped(conn, start, end)
+    out = []
+    for row in rows:
+        out.append({
+            "source": row["source"],
+            "model": row["model"],
+            "project": row["project"],
+            "input": int(row["input"] or 0),
+            "output": _row_output(row),
+            "cache_read": int(row["cache_read"] or 0),
+            "cache_creation": int(row["cache_creation"] or 0),
+            "total": _row_total(row),
+            "cost_usd": round(_cost_from_row(row, pricing), 4),
+        })
+    return sorted(out, key=lambda row: row["total"], reverse=True)
+
+
 def top_sessions(
     conn: sqlite3.Connection,
     period: str,
