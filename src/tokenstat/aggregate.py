@@ -248,12 +248,22 @@ def breakdown(
 
     by_model = sorted(model_map.values(), key=lambda x: x["total"], reverse=True)
     by_project = sorted(proj_map.values(), key=lambda x: x["total"], reverse=True)
+    # 权威总额：在逐行 round 之前用原始值求和。两表是同一批记录的两种切法，
+    # 若各自逐行 round 后再累加，舍入累积方向不同会让两个合计差几分钱。
+    total_cost_usd = sum(m["cost_usd"] for m in by_model)
+    total_tokens = sum(m["total"] for m in by_model)
     for m in by_model:
         m["cost_usd"] = round(m["cost_usd"], 4)
     for p in by_project:
         p["cost_usd"] = round(p["cost_usd"], 4)
 
-    return {"period": period, "by_model": by_model, "by_project": by_project}
+    return {
+        "period": period,
+        "by_model": by_model,
+        "by_project": by_project,
+        "total_cost_usd": round(total_cost_usd, 4),
+        "total_tokens": total_tokens,
+    }
 
 
 def export_rows(

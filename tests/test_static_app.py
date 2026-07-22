@@ -139,6 +139,37 @@ console.log(chartTooltipTotal([
         self.assertIn("/api/export?period=", source)
         self.assertIn("setupMaintenanceActions", source)
 
+    def test_breakdown_has_one_total_and_clear_project_explanation(self):
+        root = Path(__file__).parents[1] / "src/tokenstat/static"
+        html = (root / "index.html").read_text()
+        app = (root / "app.js").read_text()
+        self.assertIn("按项目（同一批数据按项目分摊，不重复统计）", html)
+        self.assertEqual(html.count("采集来源"), 2)
+        self.assertIn("document.querySelector('#modelTable tfoot').innerHTML = '';", app)
+        check = """
+const nodes = Object.fromEntries([
+  '#modelTable tbody', '#modelTable tfoot', '#projectTable tbody', '#projectTable tfoot'
+].map((key) => [key, { innerHTML: '' }]));
+global.document = {
+  querySelector(selector) { return nodes[selector]; },
+  getElementById() { return { innerHTML: '', style: {} }; },
+};
+getJSON = async () => ({
+  by_model: [{ source: 'codex', model: 'gpt-test', input: 1, output: 2, cache_read: 3, cache_creation: 4, total: 122, cost_usd: 9.9 }],
+  by_project: [{ source: 'codex', project: '项目A', total: 122, cost_usd: 9.9 }],
+  total_tokens: 123,
+  total_cost_usd: 10,
+});
+(async () => {
+  await loadBreakdown();
+  console.log(JSON.stringify({ model: nodes['#modelTable tfoot'].innerHTML, project: nodes['#projectTable tfoot'].innerHTML }));
+})();
+"""
+        totals = json.loads(self._run_js(check))
+        self.assertEqual(totals["model"], "")
+        self.assertIn("合计", totals["project"])
+        self.assertIn("123", totals["project"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,7 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 //     periods: { today: P, yesterday: P, week: P, month: P, year: P } }
 //   P = { total, cost_usd, by_source: { [source]: {total,cost_usd} } }
 // GET /api/daily?days=30           -> { sources, days: [ {date, total, [source]: tokens} ] }
-// GET /api/breakdown?period=...    -> { period, by_model:[...], by_project:[...] }
+// GET /api/breakdown?period=...    -> { period, by_model:[...], by_project:[...], total_tokens, total_cost_usd }
 // GET /api/audit                   -> { status, meta, sources, ingest_state, issues, ... }
 // GET /api/insights                -> { metrics, cards }
 // GET /api/top_sessions?period=&limit=  -> { period, sessions:[...] }
@@ -27,10 +27,12 @@ let CNY_RATE = 7.25;
 let breakdownSeq = 0;
 let topSessionsSeq = 0;
 let sessionDetailSeq = 0;
-// 「按项目」分页：页大小跟随「按模型」行数，使两表合计行水平对齐
+// 「按项目」分页：页大小跟随「按模型」行数，让两侧数据行保持整齐
 let projectRows = [];
 let projectPage = 0;
 let projectPageSize = 8;
+let projectTotalTokens = 0;
+let projectTotalCost = 0;
 let settingsReturnFocus = null;
 
 const VALID_PERIODS = new Set(['today', 'week', 'month', 'all']);
@@ -532,32 +534,26 @@ async function loadBreakdown() {
   const b = await getJSON(`/api/breakdown?period=${currentPeriod}`);
   if (my !== breakdownSeq) return;  // 已有更新的请求，丢弃这次迟到响应
   const mRows = b.by_model;
-  const mTotalTokens = mRows.reduce((s, r) => s + (r.total || 0), 0);
-  const mTotalCost   = mRows.reduce((s, r) => s + (r.cost_usd || 0), 0);
-  const mInput       = mRows.reduce((s, r) => s + (r.input || 0), 0);
-  const mOutput      = mRows.reduce((s, r) => s + (r.output || 0), 0);
-  const mCR          = mRows.reduce((s, r) => s + (r.cache_read || 0), 0);
-  const mCC          = mRows.reduce((s, r) => s + (r.cache_creation || 0), 0);
+  // 合计用后端权威总额，保证「按模型」「按项目」两表合计分毫不差（各自逐行 round 会差几分钱）
+  const mTotalTokens = b.total_tokens;
+  const mTotalCost   = b.total_cost_usd;
   document.querySelector('#modelTable tbody').innerHTML =
     mRows.map((r) => `<tr>
         <td>${esc(modelDisplay(r.model))}</td><td>${badge(esc(r.source))}</td>
         ${numCell(r.input)}${numCell(r.output)}${numCell(r.cache_read)}${numCell(r.cache_creation)}${numCell(r.total)}
         <td class="num">${fmtCost(r.cost_usd)}</td>
       </tr>`).join('') || '<tr><td colspan="8">暂无数据</td></tr>';
-  document.querySelector('#modelTable tfoot').innerHTML = mRows.length
-    ? `<tr class="tfoot-total">
-        <td colspan="2">合计</td>
-        ${numCell(mInput)}${numCell(mOutput)}${numCell(mCR)}${numCell(mCC)}${numCell(mTotalTokens)}
-        <td class="num">${fmtCost(mTotalCost)}</td>
-      </tr>` : '';
+  document.querySelector('#modelTable tfoot').innerHTML = '';
 
   projectRows = b.by_project;
-  // 每页行数 = 「按模型」行数，让两表的「合计」行水平对齐（下限 6 防病态分页）
+  projectTotalTokens = mTotalTokens;
+  projectTotalCost = mTotalCost;
+  // 每页行数跟随「按模型」行数，让两侧数据行保持整齐（下限 6 防病态分页）
   projectPageSize = Math.max(mRows.length, 6);
   renderProjectPage();
 }
 
-// 渲染「按项目」当前页；合计行始终是全量合计（非本页），刷新不重置页码
+// 渲染「按项目」当前页；它只是左表同一批数据的另一种查看方式，刷新不重置页码
 function renderProjectPage() {
   const rows = projectRows;
   const total = rows.length;
@@ -570,13 +566,12 @@ function renderProjectPage() {
         ${numCell(r.total)}
         <td class="num">${fmtCost(r.cost_usd)}</td>
       </tr>`).join('') || '<tr><td colspan="4">暂无数据</td></tr>';
-  const tTokens = rows.reduce((s, r) => s + (r.total || 0), 0);
-  const tCost   = rows.reduce((s, r) => s + (r.cost_usd || 0), 0);
+  // 总额放在项目汇总的右下角，模型表只看模型明细。
   document.querySelector('#projectTable tfoot').innerHTML = total
     ? `<tr class="tfoot-total">
         <td colspan="2">合计</td>
-        ${numCell(tTokens)}
-        <td class="num">${fmtCost(tCost)}</td>
+        ${numCell(projectTotalTokens)}
+        <td class="num">${fmtCost(projectTotalCost)}</td>
       </tr>` : '';
   const pager = document.getElementById('projectPager');
   if (total > projectPageSize) {

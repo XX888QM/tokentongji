@@ -84,6 +84,14 @@ class TestAggregateQueries(unittest.TestCase):
         self.assertIn("projA", names)
         self.assertIn("projB", names)
 
+    def test_breakdown_totals_reconcile_across_both_tables(self):
+        # 权威总额存在，且两表任意逐行 round 后的差异都不影响它（前端两个合计共用此值）
+        b = aggregate.breakdown(self.conn, "today", self.pricing)
+        self.assertIn("total_cost_usd", b)
+        self.assertIn("total_tokens", b)
+        self.assertEqual(b["total_tokens"], sum(m["total"] for m in b["by_model"]))
+        self.assertEqual(b["total_tokens"], sum(p["total"] for p in b["by_project"]))
+
     def test_export_rows_are_granular_and_do_not_double_count(self):
         rows = aggregate.export_rows(self.conn, "today", self.pricing)
         self.assertEqual(len(rows), 3)
