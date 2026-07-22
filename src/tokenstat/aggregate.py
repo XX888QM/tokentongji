@@ -482,11 +482,13 @@ def audit(
                 "level": "warn",
                 "message": f"全部来源已 {overall_lag} 天无新数据（最新 {newest}）",
             })
+        # 单来源落后于最新来源：分不清是采集故障还是用户没用该工具，只作 info 提示，
+        # 不升级为 warn（不触发「需关注」）。全部来源一起停摆才是真故障，见上面 overall_lag。
         for s in dated:
             lag = (newest_d - date.fromisoformat(s["activity_last_date"])).days
             if lag >= config.STALE_SOURCE_DAYS:
                 issues.append({
-                    "level": "warn",
+                    "level": "info",
                     "message": f"{s['source']} 已 {lag} 天无新数据（最后 {s['activity_last_date']}）",
                 })
     if not state["files"]:

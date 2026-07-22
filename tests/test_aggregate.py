@@ -384,7 +384,8 @@ class TestStaleSourceDetection(unittest.TestCase):
                             "cache_write_5m": 1, "cache_write_1h": 1},
                 "anthropic": {}, "openai": {}}
 
-    def test_stale_source_warns(self):
+    def test_stale_single_source_is_info_not_warn(self):
+        # 单来源落后（用户没用该工具）只作 info，不触发「需关注」
         conn = db.get_conn(":memory:")
         try:
             db.init_db(conn)
@@ -400,10 +401,10 @@ class TestStaleSourceDetection(unittest.TestCase):
                 a = aggregate.audit(conn, self._pricing())
         finally:
             conn.close()
-        msgs = " ".join(i["message"] for i in a["issues"])
-        self.assertIn("opencode 已 14 天无新数据", msgs)
-        self.assertNotIn("claude 已", msgs)  # 最新源不告警
-        self.assertEqual(a["status"], "warn")
+        stale = [i for i in a["issues"] if "opencode 已 14 天无新数据" in i["message"]]
+        self.assertEqual(len(stale), 1)
+        self.assertEqual(stale[0]["level"], "info")  # info，非 warn（不触发「需关注」）
+        self.assertNotIn("claude 已", " ".join(i["message"] for i in a["issues"]))
 
     def test_all_fresh_no_stale_warn(self):
         conn = db.get_conn(":memory:")
