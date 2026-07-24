@@ -53,19 +53,11 @@ open http://127.0.0.1:8787
 
 费用以人民币展示。页面立即使用本机缓存汇率（首次默认 7.25），服务在后台向 `open.er-api.com` 刷新，缓存 1 小时；外部请求失败不会阻塞仪表盘。
 
-## 开机自启（launchd，可选，仅 macOS）
+## 启动方式（手动，无开机自启）
 
-```bash
-# 安装（自动用当前项目路径生成 plist 并加载）
-bash scripts/install-launchd.sh
+服务只在终端里手动启动，日志写到 `data/tokenstat.log` / `data/tokenstat.err.log`。
 
-# 卸载
-bash scripts/uninstall-launchd.sh
-```
-
-日志：`data/tokenstat.log` / `data/tokenstat.err.log`
-
-安装脚本使用新版 `launchctl bootstrap` / `kickstart`，并在安装后检查服务是否已注册。可用 `launchctl print gui/$(id -u)/com.tokentongji` 查看状态；安装脚本只写入默认端口和 `PYTHONPATH`，不会继承当前终端里导出的其他 `TOKENSTAT_*` 变量。需要自定义 launchd 配置时，请修改 plist 模板后重新安装；同一端口已有手动服务时不要重复安装启动。
+本项目**不提供开机自启**：项目位于 `~/Desktop` 下，而 macOS 的隐私保护（TCC）不允许 launchd 启动的后台进程读取桌面里的文件——实测报 `Operation not permitted`，服务直接以 `EX_CONFIG`(78) 退出。终端手动启动继承终端 App 的授权，不受影响。若确实需要开机自启，得先把项目挪出 `~/Desktop`，或在「系统设置 → 隐私与安全性 → 完全磁盘访问」里给 Python 解释器授权。
 
 ## 数据保留与导出
 
@@ -101,7 +93,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - 页面只有框架没有数据：先访问 `http://127.0.0.1:8787/api/health`；打不开说明服务未启动或端口被占用。
 - 某个来源为空：确认上表中的数据源文件存在，并查看页面“运行审计”。缺失某个工具的数据不会阻止其他来源展示。
 - 审计显示“近期无新增”：采集路径正常但最近没有该工具用量，通常无需处理；显示“路径缺失”才表示当前无法继续采集，但既有历史数据仍在。
-- 启动时报地址占用：先停止已有的手动或 launchd 服务，或设置新的 `TOKENSTAT_PORT`。
+- 启动时报地址占用：先停止已在跑的服务，或设置新的 `TOKENSTAT_PORT`。
 
 ## 架构
 

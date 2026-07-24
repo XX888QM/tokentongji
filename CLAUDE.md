@@ -22,11 +22,9 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 # 单个测试文件 / 单个用例
 PYTHONPATH=src python3 -m unittest tests.test_pricing
 PYTHONPATH=src python3 -m unittest tests.test_pricing.TestNormalization.test_sonnet_5
-
-# 开机自启（launchd）—安装后用 launchctl print 确认服务已注册
-bash scripts/install-launchd.sh
-bash scripts/uninstall-launchd.sh
 ```
+
+服务只手动启动，没有开机自启：项目位于 `~/Desktop` 下，macOS 的 TCC 隐私保护不允许 launchd 启动的进程读取桌面里的文件（实测报 `Operation not permitted`，服务以 `EX_CONFIG`(78) 退出），终端手动启动则继承终端 App 的授权，正常可跑。不要再往仓库里加 launchd/开机自启方案，除非项目先挪出桌面目录。
 
 无构建步骤，无 pip 依赖。运行仪表盘只需 Python；`tests/test_static_app.py` 会调用本机 Node.js 执行前端金额格式回归测试。仓库里没有 lint 配置（`.ruff_cache` 只是本地残留缓存，没有 `pyproject.toml`/`ruff.toml`，不要假设 ruff 已接入 CI/流程）。
 
@@ -55,4 +53,4 @@ bash scripts/uninstall-launchd.sh
 - **Token 归一化口径**：`input_tokens` 是已剔除缓存命中的全价输入；`cache_read_tokens`/`cache_creation_tokens` 分开算；reasoning token 是否并入 output 因来源而异（Codex / Grok / Hermes 已是 output 子集，不重复相加；OpenCode 单独存字段，只在展示/计费时并入，见 `aggregate._row_output`）。改计费或展示逻辑前先确认没有破坏这个口径。
 - **时区固定 Asia/Shanghai**（UTC+8，无夏令时）。`models.py` 里同时实现了 zoneinfo 优先 + 固定偏移兜底两套，保证在缺 tzdata 的环境也能零依赖运行。
 - **费用是参考估算，不是真实扣费**——订阅制（Claude Max / Codex / Grok 套餐）下 token 不直接对应扣费，改 UI 文案时不要弱化这个免责声明。
-- **历史保留与备份**：原始日志只用于新增采集；已经写入 `data/tokenstat.db` 的历史记录不会因日志删除而自动清除。页面备份会复制到 `data/backups/`，重建或清理前先备份。`launchd` 安装脚本用 `bootstrap` / `kickstart` 并立即 `print` 注册状态；若服务未注册，优先查看 `data/tokenstat.err.log`。
+- **历史保留与备份**：原始日志只用于新增采集；已经写入 `data/tokenstat.db` 的历史记录不会因日志删除而自动清除。页面备份会复制到 `data/backups/`，重建或清理前先备份。服务异常先看 `data/tokenstat.err.log`。

@@ -1,7 +1,7 @@
 """Web 服务：静态仪表盘 + JSON API + 后台增量 ingest 线程。
 
 单进程：主线程跑 HTTP server，后台守护线程每 INGEST_INTERVAL 秒增量入库。
-长期运行时可按实际环境选择 launchd、tmux 或其他进程管理器。
+只手动启动：项目在 ~/Desktop 下，macOS TCC 不让 launchd 进程读桌面文件。
 """
 
 from __future__ import annotations
