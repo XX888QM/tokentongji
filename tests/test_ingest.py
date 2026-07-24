@@ -187,21 +187,39 @@ class TestDbUpserts(unittest.TestCase):
         ).fetchone()
         self.assertEqual(tuple(row), (50, 20, 50))
 
-    def test_openclaw_cross_format_duplicate_is_deleted(self):
-        common = dict(ts=100, source="openclaw", model="gpt-5.4", project="/p",
-                      input_tokens=10, output_tokens=5, cache_read_tokens=20,
-                      total_tokens=35, session_id="s")
+    def test_openclaw_paired_trajectory_rows_all_deleted(self):
+        # trajectory 行是若干 v3 行的合计，时间戳和 token 都对不上逐条 v3，
+        # 因此配对会话的 trajectory 行要整段删除，不能只删 token 全等的那条。
+        common = dict(source="openclaw", model="gpt-5.4", project="/p", session_id="s")
         db.insert_records(self.conn, [
-            UsageRecord(**common, source_file="/tmp/s.trajectory.jsonl", dedup_key="trajectory"),
-            UsageRecord(**common, source_file="/tmp/s.jsonl", dedup_key="v3"),
-            UsageRecord(**{**common, "ts": 101, "total_tokens": 36},
-                        source_file="/tmp/s.trajectory.jsonl", dedup_key="unique"),
+            UsageRecord(**common, ts=100, input_tokens=10, output_tokens=5,
+                        cache_read_tokens=20, total_tokens=35,
+                        source_file="/tmp/s.jsonl", dedup_key="v3-a"),
+            UsageRecord(**common, ts=110, input_tokens=7, output_tokens=3,
+                        cache_read_tokens=30, total_tokens=40,
+                        source_file="/tmp/s.jsonl", dedup_key="v3-b"),
+            # 合计行：ts 晚几秒，token = 上面两条之和，逐条比对永远匹配不上
+            UsageRecord(**common, ts=119, input_tokens=17, output_tokens=8,
+                        cache_read_tokens=50, total_tokens=75,
+                        source_file="/tmp/s.trajectory.jsonl", dedup_key="traj-sum"),
         ])
         self.assertEqual(db.delete_openclaw_cross_format_duplicates(self.conn), 1)
         keys = [r[0] for r in self.conn.execute(
             "SELECT dedup_key FROM usage_events ORDER BY dedup_key"
         )]
-        self.assertEqual(keys, ["unique", "v3"])
+        self.assertEqual(keys, ["v3-a", "v3-b"])
+
+    def test_openclaw_unpaired_trajectory_is_kept(self):
+        # 没有配套 v3 文件的 trajectory 是唯一数据来源，绝不能删
+        db.insert_records(self.conn, [
+            UsageRecord(ts=100, source="openclaw", model="gpt-5.4", project="/p",
+                        input_tokens=10, output_tokens=5, total_tokens=15,
+                        source_file="/tmp/lonely.trajectory.jsonl", dedup_key="solo"),
+        ])
+        self.assertEqual(db.delete_openclaw_cross_format_duplicates(self.conn), 0)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0], 1
+        )
 
 
 class TestRequestPromptMigration(unittest.TestCase):

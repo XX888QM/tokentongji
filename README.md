@@ -12,7 +12,7 @@
 | Claude | `~/.claude/projects/**/*.jsonl` | assistant 的 `message.usage`，按 `message.id` 去重；fallback 的 `usage.iterations` 按真实模型分别统计 |
 | Codex | `~/.codex/sessions` + `archived_sessions` | `token_count` 的累积 `total_token_usage` 做相邻差分（防 2x 高估）；fork 出的 subagent 文件首条快照只作基线（防父会话重复计数） |
 | OpenCode | `~/.local/share/opencode/opencode.db` | 直读 SQLite，按消息时间戳增量同步；reasoning token 计入 output |
-| OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | 兼容 trajectory 与 v3 两种格式；同一 session 的完全相同调用跨格式去重 |
+| OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | 兼容 trajectory 与 v3 两种格式；trajectory 行是 v3 多行的合计，同一 session 两格式并存时整段删 trajectory、保留 v3 明细 |
 | Hermes | `~/.hermes/state.db` | 直读累计 session 行并同步覆盖；reasoning 是 output 子集，不重复相加 |
 | Grok | `~/.grok/logs/unified.jsonl` | Grok CLI 与 claude-mem API 转录的 `shell.turn.inference_done` 增量 token；model/cwd 优先读事件内容，否则按 sid carry-forward |
 

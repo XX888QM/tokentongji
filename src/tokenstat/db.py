@@ -221,27 +221,31 @@ def insert_records(
 
 
 def delete_openclaw_cross_format_duplicates(conn: sqlite3.Connection) -> int:
-    """删除同一 session 的 trajectory/v3 完全相同调用，保留 v3 行。"""
+    """同一 session 同时有 trajectory 与 v3 两份记录时，整段删掉 trajectory 行。
+
+    recon 实测：trajectory 行**不是** v3 行的逐条副本，而是若干 v3 行的**合计**
+    （72 个配对会话里 59 个能用 v3 的前缀和精确还原 trajectory 的累计量），且两
+    边时间戳还差几秒。所以按「时间戳 + token 全等」配对只能命中零星几条，绝大
+    多数重复会留在库里——实测残留 615 行 / 1.29 亿 token，约占 OpenClaw 的 5%。
+
+    v3 是逐条明细、粒度更细，作权威保留；配对会话的 trajectory 行整体删除。
+    少数会话的 v3 被 `.jsonl.reset.*` 截断过、trajectory 反而更全（实测 3 个会
+    话共约 133 万 token，占 OpenClaw 0.05%），这里宁可少算也不虚高。
+    """
     before = conn.total_changes
     conn.execute(
         """
         DELETE FROM usage_events
-        WHERE id IN (
-            SELECT t.id
-            FROM usage_events AS t
-            JOIN usage_events AS v
-              ON v.source = 'openclaw'
-             AND v.source_file = substr(t.source_file, 1, length(t.source_file) - 17) || '.jsonl'
-             AND v.ts = t.ts
-             AND v.model = t.model
-             AND v.input_tokens = t.input_tokens
-             AND v.output_tokens = t.output_tokens
-             AND v.cache_read_tokens = t.cache_read_tokens
-             AND v.cache_creation_tokens = t.cache_creation_tokens
-             AND v.total_tokens = t.total_tokens
-            WHERE t.source = 'openclaw'
-              AND t.source_file LIKE '%.trajectory.jsonl'
-        )
+        WHERE source = 'openclaw'
+          AND source_file LIKE '%.trajectory.jsonl'
+          AND EXISTS (
+              SELECT 1 FROM usage_events AS v
+              WHERE v.source = 'openclaw'
+                AND v.source_file NOT LIKE '%.trajectory.jsonl'
+                AND v.source_file =
+                    substr(usage_events.source_file, 1,
+                           length(usage_events.source_file) - 17) || '.jsonl'
+          )
         """
     )
     conn.commit()
