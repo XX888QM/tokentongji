@@ -98,7 +98,7 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
     if clean.startswith("claude-sonnet-4-20"):
         return pick("claude-sonnet-4-0")
     if clean.startswith("claude-opus"):
-        return pick("claude-opus-4-8", "claude-opus-4-7")
+        return pick("claude-opus-5", "claude-opus-4-8", "claude-opus-4-7")
     if clean.startswith("claude-sonnet"):
         return pick("claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5")
     if clean.startswith("claude-haiku"):

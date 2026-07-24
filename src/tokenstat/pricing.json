@@ -6,13 +6,14 @@
     "source_deepseek": "https://api-docs.deepseek.com/quick_start/pricing",
     "source_xai": "https://docs.x.ai/developers/pricing",
     "fetched_date": "2026-07-20",
-    "verified_date": "2026-07-20",
+    "verified_date": "2026-07-24",
     "note": "本表按官方公开 API 单价折算；订阅制（Claude Max / Codex / Grok 套餐）下 token 不直接对应扣费，仅供参考。Grok 4.5 cache_read 按 xAI 官方价格表 $0.30 登记。grok-latest 于 2026-07-20 核验为 grok-4.3。长上下文价仅在能取得单次请求完整 prompt token 数的来源启用。"
   },
   "default": { "input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write_5m": 6.25, "cache_write_1h": 10.0 },
   "anthropic": {
     "claude-fable-5":    { "input": 10.0, "output": 50.0, "cache_read": 1.00, "cache_write_5m": 12.50, "cache_write_1h": 20.0 },
     "claude-mythos-5":   { "input": 10.0, "output": 50.0, "cache_read": 1.00, "cache_write_5m": 12.50, "cache_write_1h": 20.0 },
+    "claude-opus-5":     { "input": 5.0,  "output": 25.0, "cache_read": 0.50, "cache_write_5m": 6.25,  "cache_write_1h": 10.0 },
     "claude-opus-4-8":   { "input": 5.0,  "output": 25.0, "cache_read": 0.50, "cache_write_5m": 6.25,  "cache_write_1h": 10.0 },
     "claude-opus-4-7":   { "input": 5.0,  "output": 25.0, "cache_read": 0.50, "cache_write_5m": 6.25,  "cache_write_1h": 10.0 },
     "claude-opus-4-6":   { "input": 5.0,  "output": 25.0, "cache_read": 0.50, "cache_write_5m": 6.25,  "cache_write_1h": 10.0 },

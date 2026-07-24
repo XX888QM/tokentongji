@@ -9,10 +9,20 @@ class TestNormalization(unittest.TestCase):
         self.p = pricing.load_pricing()
 
     def test_opus_family(self):
-        for m in ("claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8"):
+        for m in ("claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7",
+                  "claude-opus-4-8", "claude-opus-5"):
             r = pricing.rates_for_model(m, self.p)
             self.assertEqual(r["input"], 5.0, m)
             self.assertEqual(r["output"], 25.0, m)
+
+    def test_opus_5_has_explicit_entry_and_leads_family_fallback(self):
+        # 显式条目，非兜底命中
+        self.assertFalse(pricing.is_unknown_model("claude-opus-5", self.p))
+        self.assertIn("claude-opus-5", self.p["anthropic"])
+        # 未来 opus 版本走家族兜底时应退到 opus-5（最新），而非旧版
+        r = pricing.rates_for_model("claude-opus-6", self.p)
+        self.assertEqual(r["input"], self.p["anthropic"]["claude-opus-5"]["input"])
+        self.assertEqual(r["output"], self.p["anthropic"]["claude-opus-5"]["output"])
 
     def test_opus_old_pricing(self):
         r = pricing.rates_for_model("claude-opus-4-1", self.p)
