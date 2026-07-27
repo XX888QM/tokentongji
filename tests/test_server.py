@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
-from tokenstat import db, server
+from tokenstat import db, ingest, server
 from tokenstat.models import UsageRecord
 from tokenstat.server import Handler
 
@@ -335,6 +335,94 @@ class TestDailyEndpointFallback(unittest.TestCase):
         self.assertEqual(code, 500)
         self.assertFalse(body["ok"])
         self.assertIn("osascript failed", body["error"])
+
+
+class TestIngestToApi(unittest.TestCase):
+    """原始日志经 run_once 入库后，接口仍保持 claude-mem 拆分且不重复计数。"""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        root = Path(self._tmpdir.name)
+        self._db_path = str(root / "data" / "test.db")
+        self._sessions = root / "sessions"
+        self._sessions.mkdir()
+        self._usage_dir = root / "usage"
+        self._usage_dir.mkdir()
+        self._config_patch = patch.multiple(
+            "tokenstat.config",
+            DATA_DIR=root / "data",
+            DB_PATH=Path(self._db_path),
+            CLAUDE_PROJECTS_DIR=root / "claude",
+            CODEX_SESSION_DIRS=(self._sessions, root / "archived_sessions"),
+            CLAUDE_MEM_CODEX_USAGE_DIR=self._usage_dir,
+            OPENCODE_DB_PATH=root / "opencode.db",
+            OPENCLAW_SESSION_DIR=root / "openclaw",
+            HERMES_STATE_DB=root / "hermes.db",
+            GROK_LOG_PATH=root / "grok.jsonl",
+        )
+        self._config_patch.start()
+
+    def tearDown(self):
+        self._config_patch.stop()
+        self._tmpdir.cleanup()
+
+    def test_raw_logs_to_api_preserve_display_totals_and_skip_bad_line(self):
+        direct = self._sessions / "rollout-direct.jsonl"
+        direct.write_text(
+            "\n".join([
+                json.dumps({"type": "session_meta", "payload": {"id": "direct-session", "cwd": "/tmp/direct"}}),
+                "{not valid json",
+                json.dumps({"type": "turn_context", "payload": {"model": "gpt-5.6-luna", "cwd": "/tmp/direct"}}),
+                json.dumps({
+                    "type": "event_msg", "timestamp": "2026-07-27T10:00:00Z",
+                    "payload": {"type": "token_count", "info": {"total_token_usage": {
+                        "input_tokens": 600, "cached_input_tokens": 200,
+                        "output_tokens": 400, "reasoning_output_tokens": 0, "total_tokens": 1000,
+                    }}},
+                }),
+            ]) + "\n",
+            encoding="utf-8",
+        )
+        (self._usage_dir / "codex-usage-2026-07-27.jsonl").write_text(
+            json.dumps({
+                "type": "claude_mem.codex_usage", "schema_version": 1,
+                "timestamp": "2026-07-27T10:01:00Z", "event_id": "mem-one",
+                "model": "gpt-5.6-luna", "project": "/tmp/claude-mem", "session_id": "mem-session",
+                "usage": {
+                    "input_tokens": 100, "cached_input_tokens": 25, "cache_write_input_tokens": 0,
+                    "output_tokens": 20, "reasoning_output_tokens": 10,
+                },
+            }) + "\n",
+            encoding="utf-8",
+        )
+
+        with patch("tokenstat.ingest.codex_parser.read_default_model", return_value="gpt-5.6-luna"):
+            self.assertEqual(ingest.run_once()["records_added"], 2)
+            self.assertEqual(ingest.run_once()["records_added"], 0)
+
+        with patch("tokenstat.aggregate._today_local", return_value=date(2026, 7, 27)):
+            summary_code, summary = _call_get("/api/summary", self._db_path)
+            daily_code, daily = _call_get("/api/daily?days=1", self._db_path)
+            breakdown_code, breakdown = _call_get("/api/breakdown?period=today", self._db_path)
+            export_code, exported = _call_get_bytes("/api/export?period=today", self._db_path)
+
+        self.assertEqual((summary_code, daily_code, breakdown_code, export_code), (200, 200, 200, 200))
+        today = summary["periods"]["today"]
+        self.assertEqual(today["total"], 1120)
+        self.assertEqual(today["by_source"]["codex"]["total"], 1120)
+        self.assertEqual(today["by_display_source"]["codex"]["total"], 1000)
+        self.assertEqual(today["by_display_source"]["claude_mem"]["total"], 120)
+        self.assertEqual(sum(row["total"] for row in today["by_display_source"].values()), today["total"])
+        self.assertEqual(daily["days"][0]["total"], 1120)
+        self.assertEqual(daily["days"][0]["codex"], 1000)
+        self.assertEqual(daily["days"][0]["claude_mem"], 120)
+        self.assertEqual(breakdown["total_tokens"], 1120)
+        self.assertEqual(
+            {(row["collector"], row["total"]) for row in breakdown["by_model"]},
+            {(None, 1000), ("claude-mem", 120)},
+        )
+        self.assertIn(b"codex,,gpt-5.6-luna,/tmp/direct", exported)
+        self.assertIn(b"codex,claude-mem,gpt-5.6-luna,/tmp/claude-mem", exported)
 
 
 if __name__ == "__main__":
