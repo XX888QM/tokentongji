@@ -28,6 +28,14 @@ CODEX_SESSION_DIRS = (
     HOME / ".codex" / "sessions",
     HOME / ".codex" / "archived_sessions",
 )
+# claude-mem 的 Codex observer 使用 `codex exec --ephemeral`，不会生成上面的
+# session JSONL；它会把 CLI 返回的真实 usage 单独落到这个小型 JSONL spool。
+CLAUDE_MEM_CODEX_USAGE_DIR = Path(
+    os.environ.get(
+        "TOKENSTAT_CLAUDE_MEM_USAGE_DIR",
+        str(HOME / ".claude-mem" / "usage"),
+    )
+)
 OPENCODE_DB_PATH = HOME / ".local" / "share" / "opencode" / "opencode.db"
 OPENCLAW_SESSION_DIR = HOME / ".openclaw" / "agents" / "main" / "sessions"
 HERMES_STATE_DB = HOME / ".hermes" / "state.db"

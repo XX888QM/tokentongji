@@ -6,9 +6,9 @@ const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').
 // GET /api/summary
 //   { generated_at, refresh_sec, pricing_note,
 //     periods: { today: P, yesterday: P, week: P, month: P, year: P } }
-//   P = { total, cost_usd, by_source: { [source]: {total,cost_usd} } }
-// GET /api/daily?days=30           -> { sources, days: [ {date, total, [source]: tokens} ] }
-// GET /api/breakdown?period=...    -> { period, by_model:[...], by_project:[...], total_tokens, total_cost_usd }
+//   P = { total, cost_usd, by_source: {物理来源}, by_display_source: {展示来源} }
+// GET /api/daily?days=30           -> { sources: [展示来源], days: [ {date, total, [source]: tokens} ] }
+// GET /api/breakdown?period=...    -> { period, by_model:[{collector?,...}], by_project:[{collector?,...}], total_tokens, total_cost_usd }
 // GET /api/audit                   -> { status, meta, sources, ingest_state, issues, ... }
 // GET /api/insights                -> { metrics, cards }
 // GET /api/top_sessions?period=&limit=  -> { period, sessions:[...] }
@@ -39,7 +39,8 @@ const VALID_PERIODS = new Set(['today', 'week', 'month', 'all']);
 
 const SOURCE_META = {
   claude:   { label: 'Claude',   color: '#ed8d5a' },
-  codex:    { label: 'Codex',    color: '#78c991' },
+  codex:    { label: 'Codex（直接）', color: '#78c991' },
+  claude_mem: { label: 'claude-mem（Codex 额度）', color: '#78dce8' },
   opencode: { label: 'Opencode', color: '#a99be5' },
   openclaw: { label: 'Openclaw', color: '#d58acb' },
   hermes:   { label: 'Hermes',   color: '#69c7dc' },
@@ -63,7 +64,13 @@ function sourceRows(bySource = {}, total = 0) {
     .map((source) => {
       const meta = metaForSource(source);
       const rec = bySource[source] || {};
-      return { source, label: meta.label, color: meta.color, total: rec.total || 0, pct: pct(rec.total || 0, total) };
+      return {
+        source,
+        label: meta.label,
+        color: meta.color,
+        total: rec.total || 0,
+        pct: pct(rec.total || 0, total),
+      };
     })
     .filter((row) => row.total > 0)
     .sort((a, b) => b.total - a.total);
@@ -184,7 +191,9 @@ const chartTooltipTotal = (items) => {
 };
 
 const numCell = (n) => `<td class="num" title="${fmt(n)}">${fmtCN(n)}</td>`;
+const exactNumCell = (n) => `<td class="num" title="${fmt(n)}">${fmt(n)}</td>`;
 const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
+const sourceTotal = (row) => fmtCN(row.total);
 
 async function getJSON(url) {
   const res = await fetch(url, { cache: 'no-store' });
@@ -218,7 +227,7 @@ async function maybeNotifyAlert(message) {
 
 // ---- HERO（今日）----
 function renderHero(p, day) {
-  const src = p.by_source || {};
+  const src = p.by_display_source || p.by_source || {};
   const total = p.total || 0;
   const rows = sourceRows(src, total);
 
@@ -237,15 +246,21 @@ function renderHero(p, day) {
 
   document.getElementById('heroSplitLegend').innerHTML = rows
     .map((row) =>
-      `<div class="split-row"><span class="dot" style="background:${row.color}"></span><span class="label">${esc(row.label)}</span>` +
-      `<span class="value">${fmtCN(row.total)}</span><span class="pct">${row.pct}%</span></div>`
+      `<div class="split-row${row.source === 'claude_mem' ? ' claude-mem' : ''}"><span class="dot" style="background:${row.color}"></span><span class="label">${esc(row.label)}</span>` +
+      `<span class="value" title="${fmt(row.total)} tokens">${sourceTotal(row)}</span><span class="pct">${row.pct}%</span></div>`
     ).join('');
+  const splitNote = document.getElementById('heroSplitNote');
+  const hasClaudeMem = rows.some((row) => row.source === 'claude_mem');
+  splitNote.hidden = !hasClaudeMem;
+  splitNote.textContent = hasClaudeMem
+    ? 'claude-mem 使用 Codex 额度，已从“Codex（直接）”中拆出，不重复计入总数。'
+    : '';
 }
 
 // ---- 支撑数据卡（昨天/近7天/本月）----
 function statCard(label, p) {
-  const split = sourceRows(p.by_source || {}, p.total || 0)
-    .map((row) => `<span style="color:${row.color}">${esc(row.label)} ${fmtCN(row.total)}</span>`)
+  const split = sourceRows(p.by_display_source || p.by_source || {}, p.total || 0)
+    .map((row) => `<span title="${fmt(row.total)} tokens" style="color:${row.color}">${esc(row.label)} ${sourceTotal(row)}</span>`)
     .join('');
   return `
     <div class="stat-card">
@@ -346,7 +361,11 @@ async function loadDaily() {
   }
 }
 
-const badge = (src) => `<span class="badge ${src}">${src}</span>`;
+const badge = (src, label = src) => `<span class="badge ${esc(src)}">${esc(label)}</span>`;
+const sourceBadge = (row) => row.collector === 'claude-mem'
+  ? badge('claude-mem', 'claude-mem · Codex')
+  : badge(row.source);
+const usageTotalCell = (row) => row.collector === 'claude-mem' ? exactNumCell(row.total) : numCell(row.total);
 // 模型名去掉末尾日期后缀（如 -20251001），更清爽
 const modelDisplay = (m) => (m || '').replace(/-\d{6,8}$/, '');
 const shortPath = (p) => {
@@ -465,8 +484,8 @@ async function loadTopSessions() {
       <td><button class="session-link" data-session="${esc(r.session_id)}">${esc(r.date)}</button></td>
       <td>${esc(r.project) || '(未知)'}</td>
       <td>${esc(modelDisplay(r.model))}</td>
-      <td>${badge(esc(r.source))}</td>
-      ${numCell(r.total)}
+      <td>${sourceBadge(r)}</td>
+      ${usageTotalCell(r)}
       <td class="num">${fmtCost(r.cost_usd)}</td>
     </tr>`).join('') || '<tr><td colspan="7">暂无数据</td></tr>';
 }
@@ -482,10 +501,10 @@ async function loadSessionDetail(sessionId) {
     const summary = d.summary || {};
     const groupRows = (d.groups || []).map((g) => `
       <tr>
-        <td>${badge(esc(g.source))}</td>
+        <td>${sourceBadge(g)}</td>
         <td>${esc(modelDisplay(g.model))}</td>
         <td title="${esc(g.cwd)}">${esc(g.project)}</td>
-        ${numCell(g.input)}${numCell(g.output)}${numCell(g.cache_read)}${numCell(g.cache_creation)}${numCell(g.total)}
+        ${numCell(g.input)}${numCell(g.output)}${numCell(g.cache_read)}${numCell(g.cache_creation)}${usageTotalCell(g)}
         <td class="num">${fmtCost(g.cost_usd)}</td>
       </tr>`).join('') || '<tr><td colspan="8">暂无分组</td></tr>';
     const fileRows = (d.source_files || []).map((f) => `
@@ -539,8 +558,8 @@ async function loadBreakdown() {
   const mTotalCost   = b.total_cost_usd;
   document.querySelector('#modelTable tbody').innerHTML =
     mRows.map((r) => `<tr>
-        <td>${esc(modelDisplay(r.model))}</td><td>${badge(esc(r.source))}</td>
-        ${numCell(r.input)}${numCell(r.output)}${numCell(r.cache_read)}${numCell(r.cache_creation)}${numCell(r.total)}
+        <td>${esc(modelDisplay(r.model))}</td><td>${sourceBadge(r)}</td>
+        ${numCell(r.input)}${numCell(r.output)}${numCell(r.cache_read)}${numCell(r.cache_creation)}${usageTotalCell(r)}
         <td class="num">${fmtCost(r.cost_usd)}</td>
       </tr>`).join('') || '<tr><td colspan="8">暂无数据</td></tr>';
   document.querySelector('#modelTable tfoot').innerHTML = '';
@@ -562,8 +581,8 @@ function renderProjectPage() {
   const start = projectPage * projectPageSize;
   document.querySelector('#projectTable tbody').innerHTML =
     rows.slice(start, start + projectPageSize).map((r) => `<tr>
-        <td>${esc(r.project) || '(未知)'}</td><td>${badge(esc(r.source))}</td>
-        ${numCell(r.total)}
+        <td>${esc(r.project) || '(未知)'}</td><td>${sourceBadge(r)}</td>
+        ${usageTotalCell(r)}
         <td class="num">${fmtCost(r.cost_usd)}</td>
       </tr>`).join('') || '<tr><td colspan="4">暂无数据</td></tr>';
   // 总额放在项目汇总的右下角，模型表只看模型明细。

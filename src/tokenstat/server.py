@@ -332,7 +332,10 @@ class Handler(BaseHTTPRequestHandler):
         data["db"] = _db_status()
         data["data_sources"] = {
             "claude": _path_status(config.CLAUDE_PROJECTS_DIR),
-            "codex": [_path_status(path) for path in config.CODEX_SESSION_DIRS],
+            "codex": [
+                *(_path_status(path) for path in config.CODEX_SESSION_DIRS),
+                _path_status(config.CLAUDE_MEM_CODEX_USAGE_DIR),
+            ],
             "opencode": _path_status(config.OPENCODE_DB_PATH),
             "openclaw": _path_status(config.OPENCLAW_SESSION_DIR),
             "hermes": _path_status(config.HERMES_STATE_DB),
@@ -397,10 +400,10 @@ class Handler(BaseHTTPRequestHandler):
 
         output = io.StringIO(newline="")
         writer = csv.writer(output)
-        writer.writerow(["period", "source", "model", "project", "input_tokens", "output_tokens",
+        writer.writerow(["period", "source", "collector", "model", "project", "input_tokens", "output_tokens",
                          "cache_read_tokens", "cache_creation_tokens", "total_tokens", "cost_usd"])
         for row in rows:
-            writer.writerow([period, row["source"], row["model"], row["project"], row["input"], row["output"],
+            writer.writerow([period, row["source"], row["collector"] or "", row["model"], row["project"], row["input"], row["output"],
                              row["cache_read"], row["cache_creation"], row["total"], row["cost_usd"]])
         body = ("\ufeff" + output.getvalue()).encode("utf-8")
         self.send_response(200)

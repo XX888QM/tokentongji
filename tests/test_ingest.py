@@ -52,6 +52,25 @@ def _tc(total, inp, cached, out, ts="2026-05-01T10:00:00Z"):
     }
 
 
+def _claude_mem_usage(event_id="thread-1"):
+    return {
+        "type": "claude_mem.codex_usage",
+        "schema_version": 1,
+        "timestamp": "2026-07-27T08:58:18.000Z",
+        "event_id": event_id,
+        "model": "gpt-5.6-luna",
+        "project": "/project",
+        "session_id": "session-1",
+        "usage": {
+            "input_tokens": 100,
+            "cached_input_tokens": 25,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 20,
+            "reasoning_output_tokens": 10,
+        },
+    }
+
+
 class TestClaudeIngest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -339,6 +358,21 @@ class TestCodexIngest(unittest.TestCase):
         ingest._ingest_file(self.conn, f, "codex", "gpt-5.5")
         row = self.conn.execute("SELECT model FROM usage_events").fetchone()
         self.assertEqual(row["model"], "gpt-5.5")
+
+    def test_claude_mem_usage_spool_is_discovered_and_deduplicated(self):
+        usage_dir = Path(self.tmp.name) / "usage"
+        usage_dir.mkdir()
+        spool = usage_dir / "codex-usage-2026-07-27.jsonl"
+        _w(spool, [_claude_mem_usage()])
+        with patch("tokenstat.ingest.config.CLAUDE_MEM_CODEX_USAGE_DIR", usage_dir):
+            self.assertEqual(list(ingest.claude_mem_codex_usage_files()), [spool])
+            self.assertEqual(ingest._ingest_file(self.conn, spool, "codex", "gpt-5.5"), 1)
+            self.assertEqual(ingest._ingest_file(self.conn, spool, "codex", "gpt-5.5"), 0)
+        row = self.conn.execute(
+            "SELECT category, input_tokens, cache_read_tokens, output_tokens, total_tokens "
+            "FROM usage_events"
+        ).fetchone()
+        self.assertEqual(tuple(row), ("observer", 75, 25, 20, 120))
 
 
 class TestOpenclaWV3Ingest(unittest.TestCase):

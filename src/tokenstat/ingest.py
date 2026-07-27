@@ -40,6 +40,12 @@ def codex_files() -> Iterator[Path]:
             yield from root.rglob("*.jsonl")
 
 
+def claude_mem_codex_usage_files() -> Iterator[Path]:
+    root = config.CLAUDE_MEM_CODEX_USAGE_DIR
+    if root.is_dir():
+        yield from sorted(root.glob("codex-usage-*.jsonl"))
+
+
 def openclaw_files() -> Iterator[Path]:
     root = config.OPENCLAW_SESSION_DIR
     if root.is_dir():
@@ -311,6 +317,9 @@ def run_once() -> dict:
             records_added += _ingest_file(conn, path, SOURCE_CLAUDE, default_model)
             files_scanned += 1
         for path in codex_files():
+            records_added += _ingest_file(conn, path, SOURCE_CODEX, default_model)
+            files_scanned += 1
+        for path in claude_mem_codex_usage_files():
             records_added += _ingest_file(conn, path, SOURCE_CODEX, default_model)
             files_scanned += 1
         records_added += _ingest_opencode(conn)

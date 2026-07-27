@@ -9,7 +9,7 @@ A local desktop web dashboard that tracks token usage from **Claude Code**, **Co
 | Source | Path | Method |
 |---|---|---|
 | Claude | `~/.claude/projects/**/*.jsonl` | Reads assistant `message.usage`, deduplicates by `message.id`, and separates fallback `usage.iterations` by their real model |
-| Codex | `~/.codex/sessions` + `archived_sessions` | Computes adjacent deltas from cumulative `total_token_usage`; the first snapshot in a forked subagent file is only a baseline |
+| Codex | `~/.codex/sessions` + `archived_sessions`; claude-mem also reads `~/.claude-mem/usage/codex-usage-*.jsonl` | Computes adjacent deltas from cumulative `total_token_usage`; ephemeral `codex exec` calls use the exact one-shot `turn.completed.usage` value and are shown separately as `claude-mem (Codex quota)` |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Reads SQLite directly and syncs incrementally by message timestamp; reasoning tokens count as output |
 | OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | Supports trajectory and v3 formats and removes identical calls duplicated across both formats |
 | Hermes | `~/.hermes/state.db` | Reads cumulative session rows and synchronizes replacements; reasoning is a subset of output and is not added twice |
@@ -39,10 +39,10 @@ open http://127.0.0.1:8787
 
 ## Dashboard features
 
-- Today, last 7 days, this month, and all-time token totals with estimated CNY cost and per-source shares
+- Today, last 7 days, this month, and all-time token totals with estimated CNY cost and per-source shares; Codex is split into direct Codex and `claude-mem (Codex quota)`
 - Chinese large-number units (`万 / 亿 / 万亿 / 京 / 垓`) with exact values on hover
-- 30-day multi-source token trend chart
-- Model and project breakdowns with totals, cache-token columns, costs, and period switching
+- 30-day multi-source token trend chart, including a separate claude-mem series
+- Model and project breakdowns with totals, cache-token columns, costs, period switching, and a `claude-mem · Codex` marker where applicable
 - Runtime audit for source paths, ingest progress, unknown models, and mixed-source sessions
 - Anomaly insights for the largest model/project contributions and baseline comparisons
 - Top 10 most expensive sessions with model and source-file details
@@ -50,19 +50,15 @@ open http://127.0.0.1:8787
 
 Costs are displayed in CNY. The page immediately uses a cached exchange rate (7.25 on first launch), while the server refreshes USD→CNY from `open.er-api.com` in the background and caches it for one hour. Network failures do not block the dashboard.
 
-## Launch at login (optional, macOS only)
+### claude-mem accounting
 
-```bash
-# Install and load a plist generated with the current project path
-bash scripts/install-launchd.sh
+claude-mem uses Codex quota; it is not an additional Codex charge. The dashboard separates physical Codex data into two **display sources**: `Codex (direct)` and `claude-mem (Codex quota)`. They always add up to physical Codex usage, without double-counting totals or costs. Source share, period cards, trend, details, sessions, and CSV use the same split; runtime audit still checks physical Codex.
 
-# Uninstall
-bash scripts/uninstall-launchd.sh
-```
+## Manual startup (no launchd)
 
-Logs: `data/tokenstat.log` / `data/tokenstat.err.log`
+Start the service from a terminal. Logs are written to `data/tokenstat.log` / `data/tokenstat.err.log`.
 
-The installer only sets the default port and `PYTHONPATH`; it does not inherit other `TOKENSTAT_*` variables exported in your shell. Edit the plist template and reinstall if launchd needs custom settings. KeepAlive restart behavior can be unreliable on some macOS versions, so use foreground startup or another process manager when needed. Do not start a second service on the same port.
+This project is under `~/Desktop`. macOS TCC blocks a launchd background process from reading Desktop files (`Operation not permitted`, service exits with `EX_CONFIG` 78), while a terminal process inherits the terminal app's permission. Do not add login-start automation unless the project is moved out of `~/Desktop` or the Python interpreter has Full Disk Access.
 
 ## Configuration
 
@@ -75,6 +71,7 @@ The installer only sets the default port and `PYTHONPATH`; it does not inherit o
 | `TOKENSTAT_STALE_DAYS` | 3 | Warn after a source has no new data, or trails other sources, by this many days |
 | `TOKENSTAT_DATA_DIR` | `./data` | SQLite and log directory |
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok unified log path |
+| `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | Directory containing claude-mem Codex one-shot usage JSONL files |
 
 Pricing is configured in `src/tokenstat/pricing.json` in USD per million tokens. Local and self-hosted models use the zero-rate `local` section. `codex-auto-review` and `gpt-5-codex` are estimated using the public OpenAI Codex `gpt-5.3-codex` price.
 
@@ -92,7 +89,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 - Empty dashboard shell: open `http://127.0.0.1:8787/api/health`. If it does not respond, the service is stopped or the port is occupied.
 - Missing source: verify the corresponding path above and check Runtime Audit. A missing source does not prevent other sources from loading.
-- Address already in use: stop the existing manual or launchd service, or set a different `TOKENSTAT_PORT`.
+- Address already in use: stop the existing manual service, or set a different `TOKENSTAT_PORT`.
 
 ## Architecture
 

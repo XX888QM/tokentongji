@@ -9,7 +9,7 @@ Panel web local para escritorio que registra el uso de tokens de **Claude Code**
 | Fuente | Ruta | Método |
 |---|---|---|
 | Claude | `~/.claude/projects/**/*.jsonl` | Lee `message.usage` del assistant, elimina duplicados por `message.id` y separa `usage.iterations` de fallback por su modelo real |
-| Codex | `~/.codex/sessions` + `archived_sessions` | Calcula diferencias consecutivas de `total_token_usage`; la primera instantánea de un archivo subagent derivado solo sirve como referencia |
+| Codex | `~/.codex/sessions` + `archived_sessions`; claude-mem también lee `~/.claude-mem/usage/codex-usage-*.jsonl` | Calcula diferencias consecutivas de `total_token_usage`; las llamadas ephemeral `codex exec` usan el valor exacto de una sola ejecución `turn.completed.usage` y se muestran como `claude-mem (cuota de Codex)` |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Lee SQLite directamente y sincroniza por la marca de tiempo del mensaje; los reasoning tokens se incluyen en output |
 | OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | Admite formatos trajectory y v3 y elimina llamadas idénticas duplicadas entre ambos |
 | Hermes | `~/.hermes/state.db` | Lee filas acumuladas de session y sincroniza reemplazos; reasoning es un subconjunto de output y no se suma dos veces |
@@ -39,10 +39,10 @@ open http://127.0.0.1:8787
 
 ## Funciones del panel
 
-- Tokens de hoy, últimos 7 días, mes actual y acumulado, con coste estimado en CNY y proporción por fuente
+- Tokens de hoy, últimos 7 días, mes actual y acumulado, con coste estimado en CNY y proporción por fuente; Codex se divide entre uso directo y `claude-mem (cuota de Codex)`
 - Unidades numéricas chinas (`万 / 亿 / 万亿 / 京 / 垓`) y valor exacto al pasar el cursor
-- Gráfico de tendencia de tokens por fuente durante 30 días
-- Desglose por modelo y proyecto (cwd), con costes, cache tokens, totales y selector de periodo
+- Gráfico de tendencia de tokens por fuente durante 30 días, con claude-mem como serie independiente
+- Desglose por modelo y proyecto (cwd), con costes, cache tokens, totales, selector de periodo y la marca `claude-mem · Codex` cuando corresponda
 - Auditoría de ejecución: rutas, progreso de ingesta, modelos desconocidos y sesiones con fuentes mezcladas
 - Análisis de anomalías: mayores contribuciones por modelo/proyecto y comparación con referencias
 - Las 10 sesiones más costosas con detalle por modelo y archivo de origen
@@ -50,19 +50,15 @@ open http://127.0.0.1:8787
 
 Los costes se muestran en CNY. La página usa de inmediato el tipo de cambio almacenado (7,25 en el primer inicio), mientras el servidor actualiza USD→CNY desde `open.er-api.com` en segundo plano y lo guarda durante una hora. Los fallos de red no bloquean el panel.
 
-## Inicio de sesión automático (opcional, solo macOS)
+### Contabilización de claude-mem
 
-```bash
-# Genera y carga un plist con la ruta actual del proyecto
-bash scripts/install-launchd.sh
+claude-mem usa cuota de Codex; no es un consumo adicional de Codex. El panel divide los datos físicos de Codex en dos **fuentes de visualización**: `Codex (directo)` y `claude-mem (cuota de Codex)`. Ambas suman el uso físico de Codex sin duplicar tokens ni costes. La proporción, tarjetas de periodo, tendencia, detalle, sesiones y CSV usan la misma división; la auditoría sigue comprobando Codex físico.
 
-# Desinstala
-bash scripts/uninstall-launchd.sh
-```
+## Inicio manual (sin launchd)
 
-Registros: `data/tokenstat.log` / `data/tokenstat.err.log`
+Inicia el servicio desde una terminal. Los registros se escriben en `data/tokenstat.log` / `data/tokenstat.err.log`.
 
-El instalador solo define el puerto predeterminado y `PYTHONPATH`; no hereda otras variables `TOKENSTAT_*` exportadas en la terminal. Edita la plantilla plist y reinstala si launchd necesita una configuración personalizada. El reinicio KeepAlive puede ser inestable en algunas versiones de macOS; utiliza el inicio en primer plano u otro gestor de procesos cuando sea necesario. No inicies dos servicios en el mismo puerto.
+El proyecto está bajo `~/Desktop`. TCC de macOS bloquea que un proceso de launchd lea archivos del Escritorio (`Operation not permitted`, salida `EX_CONFIG` 78); un proceso de terminal hereda el permiso de la app Terminal. No añadas inicio automático hasta mover el proyecto fuera de `~/Desktop` o dar Acceso total al disco al intérprete Python.
 
 ## Configuración
 
@@ -75,6 +71,7 @@ El instalador solo define el puerto predeterminado y `PYTHONPATH`; no hereda otr
 | `TOKENSTAT_STALE_DAYS` | 3 | Días sin datos nuevos, o de retraso frente a otras fuentes, antes de mostrar una alerta |
 | `TOKENSTAT_DATA_DIR` | `./data` | Directorio de SQLite y registros |
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Ruta del registro unificado de Grok |
+| `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | Directorio de JSONL de uso único de Codex de claude-mem |
 
 Los precios se configuran en `src/tokenstat/pricing.json` en USD por millón de tokens. Los modelos locales o autoalojados usan la sección `local` con tarifa cero. `codex-auto-review` y `gpt-5-codex` se estiman con el precio público de OpenAI Codex para `gpt-5.3-codex`.
 
@@ -92,7 +89,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 - El panel solo muestra la estructura: abre `http://127.0.0.1:8787/api/health`. Si no responde, el servicio está detenido o el puerto está ocupado.
 - Falta una fuente: comprueba la ruta correspondiente y la auditoría de ejecución. La ausencia de una fuente no impide cargar las demás.
-- Dirección en uso: detén el servicio manual o de launchd existente, o configura otro `TOKENSTAT_PORT`.
+- Dirección en uso: detén el servicio manual existente, o configura otro `TOKENSTAT_PORT`.
 
 ## Arquitectura
 

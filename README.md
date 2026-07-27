@@ -10,7 +10,7 @@
 | 来源 | 路径 | 取数方式 |
 |------|------|---------|
 | Claude | `~/.claude/projects/**/*.jsonl` | assistant 的 `message.usage`，按 `message.id` 去重；fallback 的 `usage.iterations` 按真实模型分别统计 |
-| Codex | `~/.codex/sessions` + `archived_sessions` | `token_count` 的累积 `total_token_usage` 做相邻差分（防 2x 高估）；fork 出的 subagent 文件首条快照只作基线（防父会话重复计数） |
+| Codex | `~/.codex/sessions` + `archived_sessions`；claude-mem 额外读取 `~/.claude-mem/usage/codex-usage-*.jsonl` | 普通会话对 `token_count` 的累积 `total_token_usage` 做相邻差分（防 2x 高估）；claude-mem 的 `codex exec --ephemeral` 用单次 `turn.completed.usage` 精确入账，标记为后台 observer，并在页面拆成 `Codex（直接）` 与 `claude-mem（Codex 额度）` |
 | OpenCode | `~/.local/share/opencode/opencode.db` | 直读 SQLite，按消息时间戳增量同步；reasoning token 计入 output |
 | OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | 兼容 trajectory 与 v3 两种格式；trajectory 行是 v3 多行的合计，同一 session 两格式并存时整段删 trajectory、保留 v3 明细 |
 | Hermes | `~/.hermes/state.db` | 直读累计 session 行并同步覆盖；reasoning 是 output 子集，不重复相加 |
@@ -40,18 +40,22 @@ open http://127.0.0.1:8787
 
 ## 仪表盘内容
 
-- 顶部卡片：今日 / 近 7 天 / 本月 / 累计 总 token + 估算费用（人民币，后台更新的 USD→CNY 缓存汇率），多来源占比分列
+- 顶部卡片：今日 / 近 7 天 / 本月 / 累计 总 token + 估算费用（人民币，后台更新的 USD→CNY 缓存汇率），多来源占比分列；Codex 会拆成 `Codex（直接）` 和 `claude-mem（Codex 额度）`
 - 数字按万进制单位显示（万 / 亿 / 万亿 / 京 / 垓），悬停看精确值
-- 折线图：近 30 天每日 token 趋势，多来源分线
-- 拆分表：按 model、按项目（cwd）的 token + 费用排行，带合计行，cache token 单列，可切今日 / 近 7 天 / 本月 / 累计
+- 折线图：近 30 天每日 token 趋势，多来源分线，claude-mem 单独成线
+- 拆分表：按 model、按项目（cwd）的 token + 费用排行，带合计行，cache token 单列；claude-mem 行明确标记 `claude-mem · Codex`，可切今日 / 近 7 天 / 本月 / 累计
 - 运行审计：数据源路径状态、入库进度、口径风险（未知模型、跨来源会话等）
 - 审计操作：可立即增量核对、备份 SQLite；原始日志后来删除也不会清掉已经入库的历史数据
-- 导出：按当前周期导出来源 / 模型 / 项目的明细 CSV
+- 导出：按当前周期导出来源 / 采集来源（`collector`）/ 模型 / 项目的明细 CSV
 - 异常洞察：当日最大贡献模型 / 项目，环比基线对比
 - TOP 10 最贵会话，点击展开按模型 / 文件明细
 - 每 30s 自动刷新
 
 费用以人民币展示。页面立即使用本机缓存汇率（首次默认 7.25），服务在后台向 `open.er-api.com` 刷新，缓存 1 小时；外部请求失败不会阻塞仪表盘。
+
+### claude-mem 统计口径
+
+claude-mem 不是另一份 Codex 额度：它调用的就是 Codex 额度。为让你看清“它到底用了多少”，页面把物理 Codex 记录拆成两个**展示来源**：`Codex（直接）` 和 `claude-mem（Codex 额度）`。两者相加才是原始 Codex 总量；总览、周期卡、趋势、拆分明细、会话和 CSV 都使用同一套拆分，**不会重复算进总 token 或费用**。运行审计仍按真实物理来源 Codex 判断采集健康。
 
 ## 启动方式（手动，无开机自启）
 
@@ -63,7 +67,7 @@ open http://127.0.0.1:8787
 
 - 所有已统计记录都在 `data/tokenstat.db`。删除 Claude、Codex 等原始日志不会自动删除数据库中的历史统计。
 - 页面“备份数据库”会创建 `data/backups/tokenstat-*.db` 的独立副本；需要重建或清理数据前先备份。
-- 页面“立即核对”只做一次增量扫描，不会清库；“导出当前 CSV”输出当前周期的来源、模型、项目和费用明细。
+- 页面“立即核对”只做一次增量扫描，不会清库；“导出当前 CSV”输出当前周期的来源、采集来源（`collector`）、模型、项目和费用明细。普通记录的 `collector` 为空，claude-mem 记录为 `claude-mem`。
 
 ## 配置（环境变量）
 
@@ -76,6 +80,7 @@ open http://127.0.0.1:8787
 | `TOKENSTAT_STALE_DAYS` | 3 | 来源无新数据或落后其他来源多少天后告警，须为正整数 |
 | `TOKENSTAT_DATA_DIR` | `./data` | SQLite 与日志目录 |
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 统一日志路径 |
+| `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex 单次真实用量 JSONL 目录 |
 
 费用单价见 `src/tokenstat/pricing.json`，可自行调整（美元/百万 token）。本地/自托管模型放 `local` 分区按零费率处理。`codex-auto-review` 和 `gpt-5-codex` 按 OpenAI Codex 专项 `gpt-5.3-codex` 公开价格估算。
 **注意：订阅制（Claude Max / Codex / Grok 套餐）下 token 不直接对应扣费，费用仅供参考。**
@@ -112,7 +117,7 @@ src/tokenstat/
   ingest.py      增量入库（字节 offset 断点续读）
   pricing.py     费用估算 + model 归一化
   pricing.json   单价表（anthropic / openai / deepseek / xai / local）
-  aggregate.py   按天/周/月/累计聚合查询
+  aggregate.py   按天/周/月/累计聚合查询（物理来源 + claude-mem 展示来源拆分）
   server.py      http.server（API + 静态 + 汇率 + 后台 ingest 线程）
   static/        index.html / app.js / styles.css / chart.min.js
 ```

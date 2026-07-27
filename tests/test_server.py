@@ -207,14 +207,18 @@ class TestDailyEndpointFallback(unittest.TestCase):
             db.insert_records(conn, [
                 UsageRecord(ts=int(time.time()), source="codex", model="gpt-5.5",
                             project="/tmp/proj", input_tokens=10, total_tokens=10,
-                            dedup_key="export-1")
+                            dedup_key="export-1"),
+                UsageRecord(ts=int(time.time()), source="codex", model="gpt-5.6-luna",
+                            project="/tmp/claude-mem", input_tokens=20, total_tokens=20,
+                            category="observer", dedup_key="claude-mem-codex:export-2"),
             ])
         finally:
             conn.close()
         code, body = _call_get_bytes("/api/export?period=today", self._db_path)
         self.assertEqual(code, 200)
-        self.assertIn(b"source,model,project", body)
-        self.assertIn(b"codex,gpt-5.5,/tmp/proj", body)
+        self.assertIn(b"source,collector,model,project", body)
+        self.assertIn(b"codex,,gpt-5.5,/tmp/proj", body)
+        self.assertIn(b"codex,claude-mem,gpt-5.6-luna,/tmp/claude-mem", body)
 
     def test_ingest_endpoint_requires_its_own_action_header(self):
         code, body = _call_post("/api/ingest", self._db_path, {}, headers={"X-Tokenstat-Action": "notify"})

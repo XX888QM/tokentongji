@@ -509,5 +509,68 @@ class TestCategoryCard(unittest.TestCase):
         self.assertIn("全部为主交互", card["body"])
 
 
+class TestClaudeMemSummary(unittest.TestCase):
+    def test_claude_mem_is_a_display_source_without_double_counting(self):
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-06"), source="codex", model="gpt-5.6-luna",
+                            project="/tmp/project", input_tokens=100, cache_read_tokens=200,
+                            output_tokens=300, total_tokens=600, category="observer",
+                            session_id="claude-mem-session",
+                            source_file="/tmp/claude-mem/usage/codex-usage.jsonl",
+                            dedup_key="claude-mem-codex:one"),
+                UsageRecord(ts=_ts("2026-06-06"), source="codex", model="gpt-5.6-luna",
+                            project="/tmp/project", input_tokens=900, total_tokens=900,
+                            session_id="direct-codex-session",
+                            category="observer", source_file="/tmp/other.jsonl",
+                            dedup_key="other-observer:one"),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+                data = aggregate.summary(conn, self._pricing())
+                daily = aggregate.daily(conn, days=1)
+                breakdown = aggregate.breakdown(conn, "today", self._pricing())
+                exported = aggregate.export_rows(conn, "today", self._pricing())
+                sessions = aggregate.top_sessions(conn, "today", self._pricing())["sessions"]
+                detail = aggregate.session_detail(conn, "claude-mem-session", "today", self._pricing())
+        finally:
+            conn.close()
+        self.assertEqual(data["periods"]["today"]["claude_mem"], {"total": 600, "records": 1})
+        self.assertEqual(data["periods"]["today"]["by_source"]["codex"]["total"], 1500)
+        self.assertEqual(
+            data["periods"]["today"]["by_display_source"],
+            {"codex": {"total": 900, "cost_usd": 0.0009}, "claude_mem": {"total": 600, "cost_usd": 0.0006}},
+        )
+        self.assertEqual(sum(row["total"] for row in data["periods"]["today"]["by_display_source"].values()), 1500)
+        self.assertEqual(daily["sources"], ["codex", "claude_mem"])
+        self.assertEqual(daily["days"][0]["codex"], 900)
+        self.assertEqual(daily["days"][0]["claude_mem"], 600)
+        self.assertEqual(daily["days"][0]["total"], 1500)
+        self.assertEqual(breakdown["total_tokens"], 1500)
+        self.assertEqual(
+            [(row["collector"], row["total"]) for row in breakdown["by_model"]],
+            [(None, 900), ("claude-mem", 600)],
+        )
+        self.assertEqual(
+            [(row["collector"], row["total"]) for row in exported],
+            [(None, 900), ("claude-mem", 600)],
+        )
+        self.assertEqual(sum(row["total"] for row in exported), 1500)
+        mem_session = next(row for row in sessions if row["session_id"] == "claude-mem-session")
+        self.assertEqual(mem_session["collector"], "claude-mem")
+        self.assertEqual(detail["groups"][0]["collector"], "claude-mem")
+        self.assertEqual(
+            [(row["collector"], row["total"]) for row in breakdown["by_project"]],
+            [(None, 900), ("claude-mem", 600)],
+        )
+
+    @staticmethod
+    def _pricing():
+        return {"default": {"input": 1, "output": 1, "cache_read": 1,
+                            "cache_write_5m": 1, "cache_write_1h": 1},
+                "anthropic": {}, "openai": {}}
+
+
 if __name__ == "__main__":
     unittest.main()

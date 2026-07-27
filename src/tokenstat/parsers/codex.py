@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from ..models import CATEGORY_MAIN, SOURCE_CODEX, UsageRecord, parse_iso_utc
+from ..models import CATEGORY_MAIN, CATEGORY_OBSERVER, SOURCE_CODEX, UsageRecord, parse_iso_utc
 
 _FIELDS = (
     "input_tokens",
@@ -34,6 +34,7 @@ _FIELDS = (
 )
 _DEFAULT_MODEL_FALLBACK = "gpt-5.5"
 _CONFIG_PATH = Path.home() / ".codex" / "config.toml"
+_CLAUDE_MEM_USAGE_TYPE = "claude_mem.codex_usage"
 
 
 def read_default_model(config_path: Path = _CONFIG_PATH) -> str:
@@ -99,6 +100,8 @@ def process_record(
     """处理一条 jsonl，更新 state；若产出增量则返回 UsageRecord，否则 None。"""
     if not isinstance(obj, dict):
         return None
+    if obj.get("type") == _CLAUDE_MEM_USAGE_TYPE:
+        return _process_claude_mem_usage(obj, source_file, pos)
     env_type = obj.get("type")
     payload = obj.get("payload")
     if not isinstance(payload, dict):
@@ -214,3 +217,69 @@ def process_record(
         # 在两个路径各解析一遍，若键含完整路径就挡不住 → 系统性重复计数。
         dedup_key=f"{Path(source_file).name}#{pos}",
     )
+
+
+def _process_claude_mem_usage(
+    obj: dict, source_file: str, pos: int
+) -> Optional[UsageRecord]:
+    """解析 claude-mem 对 `codex exec --json` 的单次真实 usage 记录。
+
+    `input_tokens` 已包含 `cached_input_tokens`，因此二者拆成全价输入与
+    cache_read。`cache_write_input_tokens` 原样留在来源 JSONL 中，但 Codex CLI
+    尚未定义其是否已包含在 input_tokens 内；这里不把它再计一次，避免虚高。
+    """
+    if obj.get("schema_version") != 1:
+        return None
+    event_id = obj.get("event_id")
+    if not isinstance(event_id, str) or not event_id or len(event_id) > 512:
+        return None
+    usage = obj.get("usage")
+    if not isinstance(usage, dict):
+        return None
+
+    input_total = _nonnegative_int(usage.get("input_tokens"))
+    cached = _nonnegative_int(usage.get("cached_input_tokens"))
+    cache_write = _nonnegative_int(usage.get("cache_write_input_tokens"))
+    output = _nonnegative_int(usage.get("output_tokens"))
+    reasoning = _nonnegative_int(usage.get("reasoning_output_tokens"))
+    if None in (input_total, cached, cache_write, output, reasoning):
+        return None
+    if cached > input_total or reasoning > output:
+        return None
+
+    ts = parse_iso_utc(obj.get("timestamp", ""))
+    if ts == 0:
+        return None
+    model = obj.get("model")
+    project = obj.get("project")
+    session_id = obj.get("session_id")
+    model = model.strip() if isinstance(model, str) and model.strip() else "unknown"
+    project = project.strip() if isinstance(project, str) and project.strip() else "unknown"
+    session_id = session_id.strip() if isinstance(session_id, str) else ""
+
+    return UsageRecord(
+        ts=ts,
+        source=SOURCE_CODEX,
+        model=model,
+        project=project,
+        input_tokens=input_total - cached,
+        output_tokens=output,
+        cache_read_tokens=cached,
+        # Do not double count cache_write_input_tokens until Codex documents
+        # whether it is already included in input_tokens. The raw spool keeps it.
+        cache_creation_tokens=0,
+        reasoning_tokens=reasoning,
+        total_tokens=input_total + output,
+        request_prompt_tokens=input_total,
+        session_id=session_id,
+        source_file=source_file,
+        pos=pos,
+        category=CATEGORY_OBSERVER,
+        dedup_key=f"claude-mem-codex:{event_id}",
+    )
+
+
+def _nonnegative_int(value) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value

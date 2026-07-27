@@ -9,7 +9,7 @@
 | ソース | パス | 取得方法 |
 |---|---|---|
 | Claude | `~/.claude/projects/**/*.jsonl` | assistant の `message.usage` を読み、`message.id` で重複排除。fallback の `usage.iterations` は実際のモデル別に集計 |
-| Codex | `~/.codex/sessions` + `archived_sessions` | 累積 `total_token_usage` の隣接差分を計算。fork された subagent ファイルの最初のスナップショットは基準値としてのみ使用 |
+| Codex | `~/.codex/sessions` + `archived_sessions`。claude-mem は `~/.claude-mem/usage/codex-usage-*.jsonl` も読む | 累積 `total_token_usage` の隣接差分を計算。ephemeral `codex exec` は単発の `turn.completed.usage` を正確に記録し、`claude-mem（Codex quota）` として別表示 |
 | OpenCode | `~/.local/share/opencode/opencode.db` | SQLite を直接読み、メッセージ時刻で増分同期。reasoning token は output に含める |
 | OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | trajectory と v3 の両形式に対応し、両方に存在する同一呼び出しを重複排除 |
 | Hermes | `~/.hermes/state.db` | 累積 session 行を読み、変更を同期上書き。reasoning は output の一部なので二重加算しない |
@@ -39,10 +39,10 @@ open http://127.0.0.1:8787
 
 ## ダッシュボード機能
 
-- 今日 / 過去 7 日 / 今月 / 累計の token、人民元換算の推定費用、ソース別比率
+- 今日 / 過去 7 日 / 今月 / 累計の token、人民元換算の推定費用、ソース別比率。Codex は直接使用分と `claude-mem（Codex quota）` に分割
 - 中国語の大数単位（万 / 億 / 万億 / 京 / 垓）で表示し、ホバーで正確な値を確認
-- 過去 30 日のソース別 token 推移
-- モデル別・プロジェクト別（cwd）の token、費用、cache token、合計と期間切替
+- 過去 30 日のソース別 token 推移（claude-mem は別系列）
+- モデル別・プロジェクト別（cwd）の token、費用、cache token、合計と期間切替。claude-mem 行は `claude-mem · Codex` と表示
 - 稼働監査：ソースパス、取込進捗、不明モデル、複数ソース混在 session
 - 異常分析：当日の最大モデル / プロジェクト寄与と基準値比較
 - 費用上位 10 セッションとモデル / ソースファイル詳細
@@ -50,19 +50,15 @@ open http://127.0.0.1:8787
 
 費用は人民元で表示します。初回はキャッシュ値 7.25 を即時使用し、サーバーがバックグラウンドで `open.er-api.com` から USD→CNY を更新して 1 時間キャッシュします。外部通信の失敗で画面は停止しません。
 
-## ログイン時に起動（任意、macOS のみ）
+### claude-mem の集計基準
 
-```bash
-# 現在のプロジェクトパスで plist を生成して読み込む
-bash scripts/install-launchd.sh
+claude-mem が使うのは Codex quota であり、追加の Codex 使用量ではありません。ダッシュボードでは物理 Codex を `Codex（直接）` と `claude-mem（Codex quota）` という二つの**表示ソース**に分割します。二つの合計が物理 Codex 使用量であり、総 token と費用には二重計上されません。ソース比率、期間カード、推移、明細、session、CSV は同じ分割を使い、稼働監査は物理 Codex を確認します。
 
-# アンインストール
-bash scripts/uninstall-launchd.sh
-```
+## 手動起動（launchd なし）
 
-ログ：`data/tokenstat.log` / `data/tokenstat.err.log`
+サービスはターミナルから手動で起動します。ログは `data/tokenstat.log` / `data/tokenstat.err.log` に出力されます。
 
-インストーラーが設定するのは既定ポートと `PYTHONPATH` だけで、シェルから export した他の `TOKENSTAT_*` 変数は引き継ぎません。launchd の設定を変更する場合は plist テンプレートを編集して再インストールしてください。一部の macOS では KeepAlive の再起動が不安定なため、必要に応じてフォアグラウンド起動や別のプロセスマネージャーを使用してください。同じポートでサービスを二重起動しないでください。
+プロジェクトは `~/Desktop` 配下にあります。macOS の TCC は launchd のバックグラウンドプロセスによる Desktop ファイルの読み取りを拒否します（`Operation not permitted`、`EX_CONFIG` 78 で終了）。ターミナルからの起動はターミナル App の権限を継承します。プロジェクトを `~/Desktop` 外へ移すか Python にフルディスクアクセスを付与するまで、自動起動は追加しないでください。
 
 ## 設定
 
@@ -75,6 +71,7 @@ bash scripts/uninstall-launchd.sh
 | `TOKENSTAT_STALE_DAYS` | 3 | ソースに新規データがない、または他ソースより遅れている場合に警告する日数 |
 | `TOKENSTAT_DATA_DIR` | `./data` | SQLite とログのディレクトリ |
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 統合ログのパス |
+| `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex の単発使用量 JSONL ディレクトリ |
 
 料金は `src/tokenstat/pricing.json` に USD / 100万 token で定義されています。ローカル / 自己ホストモデルはゼロ料金の `local` セクションを使用します。`codex-auto-review` と `gpt-5-codex` は OpenAI Codex の公開 `gpt-5.3-codex` 価格で推定します。
 
@@ -92,7 +89,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 - 枠だけ表示されデータがない：`http://127.0.0.1:8787/api/health` を開いてください。応答しない場合はサービス停止またはポート競合です。
 - 特定ソースが空：上記のパスと「稼働監査」を確認してください。1つのソースがなくても他のソースは表示されます。
-- アドレス使用中エラー：既存の手動 / launchd サービスを停止するか、別の `TOKENSTAT_PORT` を設定してください。
+- アドレス使用中エラー：既存の手動サービスを停止するか、別の `TOKENSTAT_PORT` を設定してください。
 
 ## アーキテクチャ
 

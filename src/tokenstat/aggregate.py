@@ -17,7 +17,13 @@ from typing import Optional
 
 from . import config
 from . import pricing as pricing_mod
-from .models import SOURCE_OPENCODE, VALID_SOURCES, _LOCAL_TZ, project_display
+from .models import CATEGORY_OBSERVER, SOURCE_CODEX, SOURCE_OPENCODE, VALID_SOURCES, _LOCAL_TZ, project_display
+
+
+# claude-mem 不是独立的模型供应商：它实际消耗 Codex 额度，但在仪表盘中必须
+# 从直接使用 Codex 的记录中拆开，才能既看见来源又不重复计数。
+CLAUDE_MEM_DISPLAY_SOURCE = "claude_mem"
+DISPLAY_SOURCES = (*VALID_SOURCES, CLAUDE_MEM_DISPLAY_SOURCE)
 
 
 def _today_local() -> date:
@@ -103,24 +109,49 @@ def _pricing_context_sql(pricing: dict) -> tuple[str, str]:
     return ", ".join(fields), ", ".join(groups)
 
 
+def _claude_mem_sql(alias: str = "") -> str:
+    """返回识别 claude-mem Codex 用量的 SQL CASE 表达式。"""
+    prefix = f"{alias}." if alias else ""
+    return (
+        f"CASE WHEN {prefix}source = '{SOURCE_CODEX}' "
+        f"AND {prefix}category = '{CATEGORY_OBSERVER}' "
+        f"AND {prefix}dedup_key LIKE 'claude-mem-codex:%' THEN 1 ELSE 0 END"
+    )
+
+
+def _collector_from_row(row: dict) -> Optional[str]:
+    return "claude-mem" if row.get("claude_mem") else None
+
+
+def _display_source_from_row(row: dict) -> str:
+    return CLAUDE_MEM_DISPLAY_SOURCE if row.get("claude_mem") else row["source"]
+
+
+def _display_source_label(row: dict) -> str:
+    return "claude-mem（Codex）" if row.get("claude_mem") else row["source"]
+
+
 def _grouped(
     conn: sqlite3.Connection, start: str, end: str, pricing: dict
 ) -> list[dict]:
-    """按 (source, model, project) 汇总区间内 token。"""
+    """按 (source, model, project, claude-mem 标记) 汇总区间内 token。"""
     context_select, context_group = _pricing_context_sql(pricing)
     context_select = f", {context_select}" if context_select else ""
     context_group = f", {context_group}" if context_group else ""
+    claude_mem_sql = _claude_mem_sql()
     cur = conn.execute(
         f"""
-        SELECT date_local AS pricing_date, source, model, project{context_select},
+        SELECT date_local AS pricing_date, source, model, project,
+               {claude_mem_sql} AS claude_mem{context_select},
                SUM(input_tokens)          AS input,
                SUM(output_tokens)         AS output,
                SUM(cache_read_tokens)     AS cache_read,
                SUM(cache_creation_tokens) AS cache_creation,
-               SUM(reasoning_tokens)      AS reasoning
+               SUM(reasoning_tokens)      AS reasoning,
+               COUNT(*)                   AS records
         FROM usage_events
         WHERE date_local BETWEEN ? AND ?
-        GROUP BY date_local, source, model, project{context_group}
+        GROUP BY date_local, source, model, project, {claude_mem_sql}{context_group}
         """,
         (start, end),
     )
@@ -133,6 +164,9 @@ def _period_summary(conn: sqlite3.Connection, period: str, pricing: dict) -> dic
     total = 0
     cost = 0.0
     by_source: dict[str, dict] = {}
+    by_display_source: dict[str, dict] = {}
+    claude_mem_total = 0
+    claude_mem_records = 0
     for r in rows:
         rt = _row_total(r)
         rc = _cost_from_row(r, pricing)
@@ -141,12 +175,25 @@ def _period_summary(conn: sqlite3.Connection, period: str, pricing: dict) -> dic
         src = by_source.setdefault(r["source"], {"total": 0, "cost_usd": 0.0})
         src["total"] += rt
         src["cost_usd"] += rc
-    for s in by_source.values():
-        s["cost_usd"] = round(s["cost_usd"], 4)
+        display_source = _display_source_from_row(r)
+        display = by_display_source.setdefault(display_source, {"total": 0, "cost_usd": 0.0})
+        display["total"] += rt
+        display["cost_usd"] += rc
+        if r["claude_mem"]:
+            claude_mem_total += rt
+            claude_mem_records += int(r["records"] or 0)
+    for source_map in (by_source, by_display_source):
+        for source in source_map.values():
+            source["cost_usd"] = round(source["cost_usd"], 4)
     return {
         "total": total,
         "cost_usd": round(cost, 4),
         "by_source": by_source,
+        "by_display_source": by_display_source,
+        "claude_mem": {
+            "total": claude_mem_total,
+            "records": claude_mem_records,
+        },
     }
 
 
@@ -166,32 +213,35 @@ def summary(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
 
 
 def daily(conn: sqlite3.Connection, days: int = 30) -> dict:
-    """近 N 天每日总 token，按来源拆分；补齐缺失日期为 0。"""
+    """近 N 天每日总 token，按展示来源拆分；补齐缺失日期为 0。"""
     today = _today_local()
     start = (today - timedelta(days=days - 1)).isoformat()
+    claude_mem_sql = _claude_mem_sql()
     cur = conn.execute(
         f"""
-        SELECT date_local, source,
+        SELECT date_local, source, {claude_mem_sql} AS claude_mem,
                SUM({_total_sql()}) AS total
         FROM usage_events
         WHERE date_local >= ?
-        GROUP BY date_local, source
+        GROUP BY date_local, source, {claude_mem_sql}
         """,
         (start,),
     )
     table: dict[str, dict[str, int]] = {}
     for row in cur.fetchall():
-        d = table.setdefault(row["date_local"], {source: 0 for source in VALID_SOURCES})
-        d[row["source"]] = d.get(row["source"], 0) + int(row["total"])
+        rec = dict(row)
+        d = table.setdefault(rec["date_local"], {source: 0 for source in DISPLAY_SOURCES})
+        source = _display_source_from_row(rec)
+        d[source] = d.get(source, 0) + int(rec["total"])
 
     out = []
     for i in range(days):
         d = (today - timedelta(days=days - 1 - i)).isoformat()
-        rec = {source: 0 for source in VALID_SOURCES}
+        rec = {source: 0 for source in DISPLAY_SOURCES}
         rec.update(table.get(d, {}))
         out.append({"date": d, **rec, "total": sum(rec.values())})
     active_sources = [
-        source for source in VALID_SOURCES
+        source for source in DISPLAY_SOURCES
         if any(day.get(source, 0) for day in out)
     ]
     return {"days": out, "sources": active_sources}
@@ -205,17 +255,20 @@ def breakdown(
     start, end = period_range(period)
     rows = _grouped(conn, start, end, pricing)
 
-    # 按 (source, model) 合并
+    # claude-mem 的实际调用来源仍是 Codex；明细中单独列出，避免和普通 Codex
+    # 同模型行混在一起而看不出它的消耗。两组仍只各算一次，合计不变。
     model_map: dict[tuple, dict] = {}
     proj_map: dict[tuple, dict] = {}
     for r in rows:
         rt = _row_total(r)
         rc = _cost_from_row(r, pricing)
-        mk = (r["source"], r["model"])
+        collector = _collector_from_row(r)
+        mk = (r["source"], r["model"], collector)
         m = model_map.setdefault(
             mk,
             {
                 "source": r["source"],
+                "collector": collector,
                 "model": r["model"],
                 "input": 0,
                 "output": 0,
@@ -232,11 +285,12 @@ def breakdown(
         m["total"] += rt
         m["cost_usd"] += rc
 
-        pk = (r["source"], r["project"])
+        pk = (r["source"], r["project"], collector)
         p = proj_map.setdefault(
             pk,
             {
                 "source": r["source"],
+                "collector": collector,
                 "project": project_display(r["project"]),
                 "cwd": r["project"],
                 "total": 0,
@@ -269,16 +323,18 @@ def breakdown(
 def export_rows(
     conn: sqlite3.Connection, period: str, pricing: Optional[dict] = None
 ) -> list[dict]:
-    """导出当前周期的最细分组（来源/模型/项目），避免项目表与模型表双重合计。"""
+    """导出当前周期的最细分组（来源/采集方/模型/项目），避免双重合计。"""
     if pricing is None:
         pricing = pricing_mod.load_pricing()
     start, end = period_range(period)
     rows = _grouped(conn, start, end, pricing)
     out_map: dict[tuple, dict] = {}
     for row in rows:
-        key = (row["source"], row["model"], row["project"])
+        collector = _collector_from_row(row)
+        key = (row["source"], collector, row["model"], row["project"])
         out = out_map.setdefault(key, {
             "source": row["source"],
+            "collector": collector,
             "model": row["model"],
             "project": row["project"],
             "input": 0,
@@ -312,9 +368,11 @@ def top_sessions(
     context_select, context_group = _pricing_context_sql(pricing)
     context_select = f", {context_select}" if context_select else ""
     context_group = f", {context_group}" if context_group else ""
+    claude_mem_sql = _claude_mem_sql()
     cur = conn.execute(
         f"""
-        SELECT date_local AS pricing_date, session_id, source, model, project{context_select},
+        SELECT date_local AS pricing_date, session_id, source, model, project,
+               {claude_mem_sql} AS claude_mem{context_select},
                SUM(input_tokens)          AS input,
                SUM(output_tokens)         AS output,
                SUM(cache_read_tokens)     AS cache_read,
@@ -325,7 +383,7 @@ def top_sessions(
         FROM usage_events
         WHERE date_local BETWEEN ? AND ?
           AND session_id != ''
-        GROUP BY date_local, session_id, source, model, project{context_group}
+        GROUP BY date_local, session_id, source, model, project, {claude_mem_sql}{context_group}
         """,
         (start, end),
     )
@@ -335,10 +393,12 @@ def top_sessions(
         sid = r["session_id"]
         rt = _row_total(r)
         rc = _cost_from_row(r, pricing)
+        collector = _collector_from_row(r)
         if sid not in sess_map:
             sess_map[sid] = {
                 "session_id": sid,
                 "source": r["source"],
+                "collector": collector,
                 "project": project_display(r["project"]),
                 "date": r["date"],
                 "total": 0,
@@ -354,6 +414,7 @@ def top_sessions(
         if rt > s["_top_tokens"]:
             s["model"] = r["model"]
             s["source"] = r["source"]
+            s["collector"] = collector
             s["project"] = project_display(r["project"])
             s["_top_tokens"] = rt
         if r["date"] < s["date"]:
@@ -364,6 +425,7 @@ def top_sessions(
         result.append({
             "session_id": s["session_id"],
             "source": s["source"],
+            "collector": s["collector"],
             "model": s["model"],
             "project": s["project"],
             "date": s["date"],
@@ -541,10 +603,12 @@ def session_detail(
     context_select, context_group = _pricing_context_sql(pricing)
     context_select = f", {context_select}" if context_select else ""
     context_group = f", {context_group}" if context_group else ""
+    claude_mem_sql = _claude_mem_sql()
 
     rows = conn.execute(
         f"""
-        SELECT date_local AS pricing_date, source, model, project{context_select},
+        SELECT date_local AS pricing_date, source, model, project,
+               {claude_mem_sql} AS claude_mem{context_select},
                SUM(input_tokens) AS input,
                SUM(output_tokens) AS output,
                SUM(cache_read_tokens) AS cache_read,
@@ -555,7 +619,7 @@ def session_detail(
                MAX(date_local) AS last_date
         FROM usage_events
         WHERE {base_where}
-        GROUP BY date_local, source, model, project{context_group}
+        GROUP BY date_local, source, model, project, {claude_mem_sql}{context_group}
         ORDER BY SUM({_total_sql()}) DESC
         """,
         params,
@@ -576,9 +640,11 @@ def session_detail(
         records += int(r["records"] or 0)
         first_date = r["first_date"] if first_date is None else min(first_date, r["first_date"])
         last_date = r["last_date"] if last_date is None else max(last_date, r["last_date"])
-        key = (r["source"], r["model"], r["project"])
+        collector = _collector_from_row(r)
+        key = (r["source"], collector, r["model"], r["project"])
         group = group_map.setdefault(key, {
             "source": r["source"],
+            "collector": collector,
             "model": r["model"],
             "project": project_display(r["project"]),
             "cwd": r["project"],
@@ -699,28 +765,30 @@ def insights(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
             })
 
     start_today, end_today = period_range("today")
+    claude_mem_sql = _claude_mem_sql()
     top_project = conn.execute(
         f"""
-        SELECT project, source,
+        SELECT project, source, {claude_mem_sql} AS claude_mem,
                SUM({_total_sql()}) AS total
         FROM usage_events
         WHERE date_local BETWEEN ? AND ?
-        GROUP BY project, source
+        GROUP BY project, source, {claude_mem_sql}
         ORDER BY total DESC
         LIMIT 1
         """,
         (start_today, end_today),
     ).fetchone()
     if top_project and top_project["total"]:
+        project_row = dict(top_project)
         cards.append({
             "level": "info",
             "title": "最大项目贡献",
-            "body": f"{project_display(top_project['project'])} / {top_project['source']} 贡献 {int(top_project['total']):,} tokens。",
+            "body": f"{project_display(project_row['project'])} / {_display_source_label(project_row)} 贡献 {int(project_row['total']):,} tokens。",
         })
 
     top_model = conn.execute(
         f"""
-        SELECT model, source,
+        SELECT model, source, {claude_mem_sql} AS claude_mem,
                SUM(input_tokens) AS input,
                SUM(output_tokens) AS output,
                SUM(cache_read_tokens) AS cache_read,
@@ -728,7 +796,7 @@ def insights(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
                SUM(reasoning_tokens) AS reasoning
         FROM usage_events
         WHERE date_local BETWEEN ? AND ?
-        GROUP BY model, source
+        GROUP BY model, source, {claude_mem_sql}
         ORDER BY SUM({_total_sql()}) DESC
         LIMIT 1
         """,
@@ -740,7 +808,7 @@ def insights(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
         cards.append({
             "level": "info",
             "title": "最大模型贡献",
-            "body": f"{r['source']} / {r['model']} 贡献 {rt:,} tokens。",
+            "body": f"{_display_source_label(r)} / {r['model']} 贡献 {rt:,} tokens。",
         })
 
     # 后台消耗占比：observer(claude-mem)/subagent 混在总量里，用户此前无法区分。

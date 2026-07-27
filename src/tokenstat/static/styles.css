@@ -184,8 +184,12 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .split-row .dot { width: 8px; height: 8px; border-radius: 50%; }
 .split-row .label { color: var(--muted); font-size: 16px; }
 .split-row .value { color: var(--paper); font: 600 15px/1 var(--number-font); }
+.split-row .value small { color: var(--dim); font: 500 12px/1 var(--number-font); }
 .split-row .pct { color: var(--dim); text-align: right; font: 500 14px/1 var(--number-font); }
-
+.split-row.claude-mem { background: linear-gradient(90deg, rgba(120,220,232,.08), transparent 72%); }
+.split-row.claude-mem .label,
+.split-row.claude-mem .value { color: var(--signal); }
+.split-note { margin-top: 12px; color: var(--dim); font-size: 13px; line-height: 1.5; }
 /* Period summary ledger */
 .stats { display: grid; grid-template-columns: repeat(4,1fr); margin-bottom: 22px; border-bottom: 1px solid var(--line); }
 .stat-card {
@@ -243,6 +247,7 @@ tfoot tr.tfoot-total td { border-top: 1px solid rgba(230,199,122,.35); border-bo
 .badge { display: inline-block; padding: 3px 8px; border: 1px solid currentColor; border-radius: 2px; font: 600 12px/1.35 var(--number-font); letter-spacing: .04em; opacity: .9; }
 .badge.claude { color: var(--claude); background: rgba(237,141,90,.06); }
 .badge.codex { color: var(--codex); background: rgba(120,201,145,.06); }
+.badge.claude-mem { color: var(--signal); background: rgba(120,220,232,.06); }
 .badge.opencode { color: var(--opencode); background: rgba(169,155,229,.06); }
 .badge.openclaw { color: var(--openclaw); background: rgba(213,138,203,.06); }
 .badge.hermes { color: var(--hermes); background: rgba(105,199,220,.06); }

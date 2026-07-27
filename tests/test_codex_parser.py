@@ -45,6 +45,25 @@ def _heartbeat():
     return {"type": "event_msg", "payload": {"type": "token_count", "info": None, "rate_limits": {}}}
 
 
+def _claude_mem_usage(event_id="thread-1"):
+    return {
+        "type": "claude_mem.codex_usage",
+        "schema_version": 1,
+        "timestamp": "2026-07-27T08:58:18.000Z",
+        "event_id": event_id,
+        "model": "gpt-5.6-luna",
+        "project": "/Users/yunxin/Desktop/开发/claude-mem",
+        "session_id": "session-1",
+        "usage": {
+            "input_tokens": 22738,
+            "cached_input_tokens": 6912,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 46,
+            "reasoning_output_tokens": 39,
+        },
+    }
+
+
 class TestCodexParser(unittest.TestCase):
     def setUp(self):
         self.state = CodexState.from_ctx({}, default_model="gpt-5.5")
@@ -184,6 +203,27 @@ class TestCodexParser(unittest.TestCase):
         self.assertEqual(total_in, 700)
         self.assertEqual(total_cached, 200)
         self.assertEqual(total_out, 600)
+
+    def test_claude_mem_ephemeral_usage_is_an_observer_record(self):
+        rec = codex.process_record(_claude_mem_usage(), "/usage/codex-usage-2026-07-27.jsonl", 0, self.state)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.source, "codex")
+        self.assertEqual(rec.category, "observer")
+        self.assertEqual(rec.input_tokens, 15826)  # 22738 - 6912 cached
+        self.assertEqual(rec.cache_read_tokens, 6912)
+        self.assertEqual(rec.output_tokens, 46)
+        self.assertEqual(rec.reasoning_tokens, 39)  # output 子集，不重复计入 total
+        self.assertEqual(rec.total_tokens, 22784)
+        self.assertEqual(rec.request_prompt_tokens, 22738)
+        self.assertEqual(rec.dedup_key, "claude-mem-codex:thread-1")
+
+    def test_claude_mem_usage_rejects_invalid_cache_or_reasoning_counts(self):
+        bad_cache = _claude_mem_usage("bad-cache")
+        bad_cache["usage"]["cached_input_tokens"] = 22739
+        self.assertIsNone(codex.process_record(bad_cache, "/usage/codex.jsonl", 0, self.state))
+        bad_reasoning = _claude_mem_usage("bad-reasoning")
+        bad_reasoning["usage"]["reasoning_output_tokens"] = 47
+        self.assertIsNone(codex.process_record(bad_reasoning, "/usage/codex.jsonl", 0, self.state))
 
 
 if __name__ == "__main__":

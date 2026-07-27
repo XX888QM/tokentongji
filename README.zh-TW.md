@@ -9,7 +9,7 @@
 | 來源 | 路徑 | 取數方式 |
 |---|---|---|
 | Claude | `~/.claude/projects/**/*.jsonl` | 讀取 assistant 的 `message.usage`，依 `message.id` 去重；fallback 的 `usage.iterations` 依真實模型分別統計 |
-| Codex | `~/.codex/sessions` + `archived_sessions` | 對累積 `total_token_usage` 做相鄰差分；fork 的 subagent 檔案首筆快照只作基線 |
+| Codex | `~/.codex/sessions` + `archived_sessions`；claude-mem 另讀取 `~/.claude-mem/usage/codex-usage-*.jsonl` | 對累積 `total_token_usage` 做相鄰差分；claude-mem 的 ephemeral `codex exec` 以單次 `turn.completed.usage` 精確入帳，頁面會獨立顯示為 `claude-mem（Codex 額度）` |
 | OpenCode | `~/.local/share/opencode/opencode.db` | 直接讀取 SQLite，依訊息時間戳增量同步；reasoning token 計入 output |
 | OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | 相容 trajectory 與 v3 格式，並移除兩種格式間的完全相同呼叫 |
 | Hermes | `~/.hermes/state.db` | 讀取累積 session 資料列並同步覆蓋；reasoning 是 output 子集，不重複相加 |
@@ -39,10 +39,10 @@ open http://127.0.0.1:8787
 
 ## 儀表板內容
 
-- 今日 / 近 7 天 / 本月 / 累計 token 總量、人民幣預估費用與各來源占比
+- 今日 / 近 7 天 / 本月 / 累計 token 總量、人民幣預估費用與各來源占比；Codex 會拆為直接 Codex 與 `claude-mem（Codex 額度）`
 - 以萬進位單位顯示數字（萬 / 億 / 萬億 / 京 / 垓），滑鼠懸停可看精確值
-- 近 30 天多來源 token 趨勢折線圖
-- 依模型與專案（cwd）拆分 token、費用、快取 token 與合計，可切換期間
+- 近 30 天多來源 token 趨勢折線圖，claude-mem 另成一條線
+- 依模型與專案（cwd）拆分 token、費用、快取 token 與合計，可切換期間；claude-mem 行標示為 `claude-mem · Codex`
 - 運行稽核：資料來源路徑、匯入進度、未知模型與跨來源 session
 - 異常洞察：當日最大模型 / 專案貢獻與基線比較
 - TOP 10 最昂貴工作階段，可展開模型與來源檔案明細
@@ -50,19 +50,15 @@ open http://127.0.0.1:8787
 
 費用以人民幣顯示。頁面會立即使用本機快取匯率（首次預設 7.25），服務在背景向 `open.er-api.com` 更新 USD→CNY，並快取 1 小時；外部請求失敗不會阻塞儀表板。
 
-## 登入時自動啟動（選用，僅 macOS）
+### claude-mem 統計口徑
 
-```bash
-# 安裝並載入使用目前專案路徑產生的 plist
-bash scripts/install-launchd.sh
+claude-mem 使用的是 Codex 額度，不是額外的一份 Codex 用量。儀表板把物理 Codex 拆成兩個**展示來源**：`Codex（直接）` 與 `claude-mem（Codex 額度）`。兩者相加才是實體 Codex 用量，不會重複計入總 token 或費用；來源占比、週期卡、趨勢、明細、會話與 CSV 都共用這個拆分，運行稽核仍檢查實體 Codex。
 
-# 解除安裝
-bash scripts/uninstall-launchd.sh
-```
+## 手動啟動（無 launchd）
 
-日誌：`data/tokenstat.log` / `data/tokenstat.err.log`
+服務只從終端機手動啟動，日誌為 `data/tokenstat.log` / `data/tokenstat.err.log`。
 
-安裝腳本只寫入預設連接埠與 `PYTHONPATH`，不會繼承終端機匯出的其他 `TOKENSTAT_*` 變數。若 launchd 需要自訂設定，請修改 plist 範本後重新安裝。部分 macOS 版本的 KeepAlive 自動復活不穩定，必要時請使用前景啟動或其他程序管理器。同一連接埠不要重複啟動服務。
+專案位於 `~/Desktop` 下，macOS TCC 會阻擋 launchd 背景程序讀取桌面檔案（`Operation not permitted`，服務以 `EX_CONFIG` 78 結束）；終端機程序會繼承終端機 App 的授權。除非把專案移出 `~/Desktop` 或給 Python 完整磁碟存取權，否則不要加入開機自啟。
 
 ## 設定
 
@@ -75,6 +71,7 @@ bash scripts/uninstall-launchd.sh
 | `TOKENSTAT_STALE_DAYS` | 3 | 來源無新資料或落後其他來源多少天後發出警示 |
 | `TOKENSTAT_DATA_DIR` | `./data` | SQLite 與日誌目錄 |
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 統一日誌路徑 |
+| `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex 單次用量 JSONL 目錄 |
 
 費用單價位於 `src/tokenstat/pricing.json`，單位為美元 / 每百萬 token。本機與自架模型使用零費率的 `local` 分區。`codex-auto-review` 和 `gpt-5-codex` 依 OpenAI Codex 公開的 `gpt-5.3-codex` 價格估算。
 
@@ -92,7 +89,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 - 頁面只有框架沒有資料：開啟 `http://127.0.0.1:8787/api/health`；若無法連線，表示服務未啟動或連接埠被占用。
 - 某個來源沒有資料：確認上方對應路徑，並查看「運行稽核」。缺少單一來源不會阻止其他來源顯示。
-- 啟動時顯示位址被占用：停止現有的手動或 launchd 服務，或設定不同的 `TOKENSTAT_PORT`。
+- 啟動時顯示位址被占用：停止現有的手動服務，或設定不同的 `TOKENSTAT_PORT`。
 
 ## 架構
 
