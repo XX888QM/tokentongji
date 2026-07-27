@@ -38,7 +38,7 @@ console.log(JSON.stringify([
         check = """
 const rows = sourceRows({ codex: { total: 90000000 }, claude_mem: { total: 12438516 } }, 102438516);
 const nodes = Object.fromEntries([
-  'heroRange', 'heroTotal', 'heroCost', 'heroSplitbar', 'heroSplitLegend', 'heroSplitNote'
+  'heroRange', 'heroTotal', 'heroCost', 'heroSplitbar', 'heroSplitLegend'
 ].map((id) => [id, { innerHTML: '', textContent: '', title: '', hidden: true }]));
 global.document = { getElementById(id) { return nodes[id]; } };
 renderHero({ total: 102438516, cost_usd: 0, by_display_source: { codex: { total: 90000000 }, claude_mem: { total: 12438516 } } }, '2026-06-06');
@@ -47,19 +47,16 @@ console.log(JSON.stringify({
   display: sourceTotal(rows[1]),
   badge: sourceBadge({ source: 'codex', collector: 'claude-mem' }),
   hero: nodes.heroSplitLegend.innerHTML,
-  note: nodes.heroSplitNote.textContent,
-  hidden: nodes.heroSplitNote.hidden,
 }));
 """
         rendered = json.loads(self._run_js(check))
-        self.assertEqual(rendered["labels"], ["Codex（直接）", "claude-mem（Codex 额度）"])
+        self.assertEqual(rendered["labels"], ["Codex", "claude-mem"])
         self.assertEqual(rendered["display"], "1243.85万")
-        self.assertIn('claude-mem · Codex', rendered["badge"])
+        self.assertEqual(rendered["badge"], '<span class="badge claude-mem">claude-mem</span>')
         self.assertIn('1243.85万', rendered["hero"])
+        self.assertNotIn('split-row claude-mem', rendered["hero"])
         self.assertIn('title="12,438,516 tokens"', rendered["hero"])
         self.assertNotIn('<small>tokens</small>', rendered["hero"])
-        self.assertIn('不重复计入总数', rendered["note"])
-        self.assertFalse(rendered["hidden"])
 
     def test_stale_session_detail_response_is_ignored(self):
         check = """

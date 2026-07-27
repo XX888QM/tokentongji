@@ -39,8 +39,8 @@ const VALID_PERIODS = new Set(['today', 'week', 'month', 'all']);
 
 const SOURCE_META = {
   claude:   { label: 'Claude',   color: '#ed8d5a' },
-  codex:    { label: 'Codex（直接）', color: '#78c991' },
-  claude_mem: { label: 'claude-mem（Codex 额度）', color: '#78dce8' },
+  codex:    { label: 'Codex', color: '#78c991' },
+  claude_mem: { label: 'claude-mem', color: '#78dce8' },
   opencode: { label: 'Opencode', color: '#a99be5' },
   openclaw: { label: 'Openclaw', color: '#d58acb' },
   hermes:   { label: 'Hermes',   color: '#69c7dc' },
@@ -246,15 +246,9 @@ function renderHero(p, day) {
 
   document.getElementById('heroSplitLegend').innerHTML = rows
     .map((row) =>
-      `<div class="split-row${row.source === 'claude_mem' ? ' claude-mem' : ''}"><span class="dot" style="background:${row.color}"></span><span class="label">${esc(row.label)}</span>` +
+      `<div class="split-row"><span class="dot" style="background:${row.color}"></span><span class="label">${esc(row.label)}</span>` +
       `<span class="value" title="${fmt(row.total)} tokens">${sourceTotal(row)}</span><span class="pct">${row.pct}%</span></div>`
     ).join('');
-  const splitNote = document.getElementById('heroSplitNote');
-  const hasClaudeMem = rows.some((row) => row.source === 'claude_mem');
-  splitNote.hidden = !hasClaudeMem;
-  splitNote.textContent = hasClaudeMem
-    ? 'claude-mem 使用 Codex 额度，已从“Codex（直接）”中拆出，不重复计入总数。'
-    : '';
 }
 
 // ---- 支撑数据卡（昨天/近7天/本月）----
@@ -363,7 +357,7 @@ async function loadDaily() {
 
 const badge = (src, label = src) => `<span class="badge ${esc(src)}">${esc(label)}</span>`;
 const sourceBadge = (row) => row.collector === 'claude-mem'
-  ? badge('claude-mem', 'claude-mem · Codex')
+  ? badge('claude-mem')
   : badge(row.source);
 const usageTotalCell = (row) => row.collector === 'claude-mem' ? exactNumCell(row.total) : numCell(row.total);
 // 模型名去掉末尾日期后缀（如 -20251001），更清爽

@@ -73,7 +73,7 @@ claude-mem が使うのは Codex quota であり、追加の Codex 使用量で�
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 統合ログのパス |
 | `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex の単発使用量 JSONL ディレクトリ |
 
-料金は `src/tokenstat/pricing.json` に USD / 100万 token で定義されています。ローカル / 自己ホストモデルはゼロ料金の `local` セクションを使用します。`codex-auto-review` と `gpt-5-codex` は OpenAI Codex の公開 `gpt-5.3-codex` 価格で推定します。
+料金は `src/tokenstat/pricing.json` に USD / 100万 token で定義されています。ローカル / 自己ホストモデルはゼロ料金の `local` セクションを使用します。`codex-auto-review` は OpenAI Codex の公開 `gpt-5.3-codex` 価格で推定し、`gpt-5-codex` は自身の公開価格を使用します。
 
 **注意：** Claude Max、Codex、Grok のサブスクリプションでは、token 使用量がそのまま請求額になるわけではありません。費用は参考値です。
 

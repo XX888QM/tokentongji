@@ -186,10 +186,6 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .split-row .value { color: var(--paper); font: 600 15px/1 var(--number-font); }
 .split-row .value small { color: var(--dim); font: 500 12px/1 var(--number-font); }
 .split-row .pct { color: var(--dim); text-align: right; font: 500 14px/1 var(--number-font); }
-.split-row.claude-mem { background: linear-gradient(90deg, rgba(120,220,232,.08), transparent 72%); }
-.split-row.claude-mem .label,
-.split-row.claude-mem .value { color: var(--signal); }
-.split-note { margin-top: 12px; color: var(--dim); font-size: 13px; line-height: 1.5; }
 /* Period summary ledger */
 .stats { display: grid; grid-template-columns: repeat(4,1fr); margin-bottom: 22px; border-bottom: 1px solid var(--line); }
 .stat-card {

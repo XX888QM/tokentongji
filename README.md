@@ -82,7 +82,7 @@ claude-mem 不是另一份 Codex 额度：它调用的就是 Codex 额度。为�
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 统一日志路径 |
 | `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex 单次真实用量 JSONL 目录 |
 
-费用单价见 `src/tokenstat/pricing.json`，可自行调整（美元/百万 token）。本地/自托管模型放 `local` 分区按零费率处理。`codex-auto-review` 和 `gpt-5-codex` 按 OpenAI Codex 专项 `gpt-5.3-codex` 公开价格估算。
+费用单价见 `src/tokenstat/pricing.json`，可自行调整（美元/百万 token）。本地/自托管模型放 `local` 分区按零费率处理。`codex-auto-review` 按 OpenAI Codex 专项 `gpt-5.3-codex` 公开价格估算；`gpt-5-codex` 使用其自身公开价格。
 **注意：订阅制（Claude Max / Codex / Grok 套餐）下 token 不直接对应扣费，费用仅供参考。**
 
 ## 测试

@@ -73,7 +73,7 @@ El proyecto está bajo `~/Desktop`. TCC de macOS bloquea que un proceso de launc
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Ruta del registro unificado de Grok |
 | `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | Directorio de JSONL de uso único de Codex de claude-mem |
 
-Los precios se configuran en `src/tokenstat/pricing.json` en USD por millón de tokens. Los modelos locales o autoalojados usan la sección `local` con tarifa cero. `codex-auto-review` y `gpt-5-codex` se estiman con el precio público de OpenAI Codex para `gpt-5.3-codex`.
+Los precios se configuran en `src/tokenstat/pricing.json` en USD por millón de tokens. Los modelos locales o autoalojados usan la sección `local` con tarifa cero. `codex-auto-review` se estima con el precio público de OpenAI Codex para `gpt-5.3-codex`; `gpt-5-codex` usa su propio precio público.
 
 **Nota:** Con suscripciones Claude Max, Codex o Grok, el uso de tokens no equivale directamente a un cargo. Todos los costes son estimaciones orientativas.
 

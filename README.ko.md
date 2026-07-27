@@ -73,7 +73,7 @@ claude-mem이 쓰는 것은 Codex 할당량이며 추가 Codex 사용량이 아�
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 통합 로그 경로 |
 | `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex 단일 사용량 JSONL 디렉터리 |
 
-가격은 `src/tokenstat/pricing.json`에 USD / 백만 token 단위로 정의됩니다. 로컬 및 자체 호스팅 모델은 0원 요금의 `local` 섹션을 사용합니다. `codex-auto-review`와 `gpt-5-codex`는 공개된 OpenAI Codex `gpt-5.3-codex` 가격으로 추정합니다.
+가격은 `src/tokenstat/pricing.json`에 USD / 백만 token 단위로 정의됩니다. 로컬 및 자체 호스팅 모델은 0원 요금의 `local` 섹션을 사용합니다. `codex-auto-review`는 공개된 OpenAI Codex `gpt-5.3-codex` 가격으로 추정하며, `gpt-5-codex`는 자체 공개 가격을 사용합니다.
 
 **주의:** Claude Max, Codex, Grok 구독에서는 token 사용량이 실제 청구액과 직접 일치하지 않습니다. 모든 비용은 참고용 추정치입니다.
 
