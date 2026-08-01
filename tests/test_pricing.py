@@ -74,14 +74,22 @@ class TestNormalization(unittest.TestCase):
 
     def test_gpt56_flagship_pricing(self):
         sol = pricing.rates_for_model("gpt-5.6-sol", self.p)
-        terra = pricing.rates_for_model("gpt-5.6-terra", self.p)
-        luna = pricing.rates_for_model("gpt-5.6-luna", self.p)
         self.assertEqual(sol["input"], 5.0)
         self.assertEqual(sol["output"], 30.0)
-        self.assertEqual(terra["input"], 2.5)
-        self.assertEqual(terra["output"], 15.0)
-        self.assertEqual(luna["input"], 1.0)
-        self.assertEqual(luna["output"], 6.0)
+        for model, short, long in (
+            ("gpt-5.6-terra", (2.0, 0.20, 2.50, 12.0), (4.0, 0.40, 5.0, 18.0)),
+            ("gpt-5.6-luna", (0.20, 0.02, 0.25, 1.20), (0.40, 0.04, 0.50, 1.80)),
+        ):
+            rates = pricing.rates_for_model(model, self.p, cache_window="30m")
+            long_rates = pricing.rates_for_model(
+                model, self.p, cache_window="30m", long_context=True
+            )
+            self.assertEqual(
+                (rates["input"], rates["cache_read"], rates["cache_write"], rates["output"]), short
+            )
+            self.assertEqual(
+                (long_rates["input"], long_rates["cache_read"], long_rates["cache_write"], long_rates["output"]), long
+            )
 
     def test_mythos_same_as_fable(self):
         r = pricing.rates_for_model("claude-mythos-5", self.p)
