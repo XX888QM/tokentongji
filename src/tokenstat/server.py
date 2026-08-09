@@ -80,6 +80,7 @@ _CONTENT_TYPES = {
     ".woff": "font/woff",
     ".svg": "image/svg+xml",
     ".png": "image/png",
+    ".webp": "image/webp",
 }
 
 
