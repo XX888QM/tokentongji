@@ -40,7 +40,8 @@ open http://127.0.0.1:8787
 
 ## 仪表盘内容
 
-- 顶部卡片：今日 / 近 7 天 / 本月 / 累计 总 token + 估算费用（人民币，后台更新的 USD→CNY 缓存汇率），多来源占比分列；Codex 会拆成 `Codex（直接）` 和 `claude-mem（Codex 额度）`
+- 顶部观测台：中心环形仪表读出今日总 token 与估算费用，来源分左右两列列出用量与占比；环图只是仪器背景，所有数字均来自实时接口
+- 周期卡片：今日 / 近 7 天 / 本月 / 累计 总 token + 估算费用（人民币，后台更新的 USD→CNY 缓存汇率）；Codex 会拆成 `Codex（直接）` 和 `claude-mem（Codex 额度）`
 - 数字按万进制单位显示（万 / 亿 / 万亿 / 京 / 垓），悬停看精确值
 - 折线图：近 30 天每日 token 趋势，多来源分线，claude-mem 单独成线
 - 拆分表：按 model、按项目（cwd）的 token + 费用排行，带合计行，cache token 单列；claude-mem 行明确标记 `claude-mem · Codex`，可切今日 / 近 7 天 / 本月 / 累计

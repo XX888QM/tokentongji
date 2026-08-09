@@ -34,6 +34,7 @@ let projectPageSize = 8;
 let projectTotalTokens = 0;
 let projectTotalCost = 0;
 let settingsReturnFocus = null;
+let heroNumberFrame = null;
 
 const VALID_PERIODS = new Set(['today', 'week', 'month', 'all']);
 
@@ -47,6 +48,10 @@ const SOURCE_META = {
   grok:     { label: 'Grok',     color: '#e2bb62' },
 };
 const SOURCE_ORDER = Object.keys(SOURCE_META);
+const OBSERVATORY_SOURCE_COLUMNS = {
+  left: ['claude', 'claude_mem', 'opencode'],
+  right: ['codex', 'grok', 'openclaw', 'hermes'],
+};
 
 function metaForSource(source) {
   return SOURCE_META[source] || { label: source, color: '#9b9ba0' };
@@ -195,6 +200,63 @@ const exactNumCell = (n) => `<td class="num" title="${fmt(n)}">${fmt(n)}</td>`;
 const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
 const sourceTotal = (row) => fmtCN(row.total);
 
+function observatoryRow(row, index) {
+  return `<div class="observatory-source-row" style="--source-color:${row.color};--signal-delay:${index * 0.42}s">` +
+    `<div class="observatory-source-name"><span class="observatory-dot"></span><span>${esc(row.label)}</span></div>` +
+    `<strong title="${fmt(row.total)} tokens">${sourceTotal(row)}</strong>` +
+    `<span class="observatory-source-pct">${row.pct}%</span>` +
+    `</div>`;
+}
+
+function observatoryRowsFor(rows, sourceOrder) {
+  const indexed = new Map(rows.map((row) => [row.source, row]));
+  return sourceOrder.map((source) => indexed.get(source)).filter(Boolean);
+}
+
+function renderObservatorySources(rows) {
+  const left = document.getElementById('obsSourcesLeft');
+  const right = document.getElementById('obsSourcesRight');
+  if (!left || !right) return;
+
+  const leftRows = observatoryRowsFor(rows, OBSERVATORY_SOURCE_COLUMNS.left);
+  const rightRows = observatoryRowsFor(rows, OBSERVATORY_SOURCE_COLUMNS.right);
+  const placed = new Set([...leftRows, ...rightRows].map((row) => row.source));
+  const remaining = rows.filter((row) => !placed.has(row.source));
+  remaining.forEach((row, index) => (index % 2 ? rightRows : leftRows).push(row));
+
+  left.innerHTML = leftRows.map(observatoryRow).join('') || '<span class="observatory-empty">暂无来源数据</span>';
+  right.innerHTML = rightRows.map((row, index) => observatoryRow(row, index + leftRows.length)).join('') || '<span class="observatory-empty">暂无来源数据</span>';
+}
+
+function renderHeroTotal(el, total) {
+  const motionAllowed = typeof window !== 'undefined' &&
+    typeof window.requestAnimationFrame === 'function' &&
+    !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const previous = Number(el.dataset?.tokenValue || 0);
+  const duration = 820;
+
+  if (!motionAllowed || previous === total) {
+    el.textContent = fmtCN(total);
+    if (el.dataset) el.dataset.tokenValue = String(total);
+    return;
+  }
+
+  if (heroNumberFrame) window.cancelAnimationFrame(heroNumberFrame);
+  const startedAt = performance.now();
+  const step = (now) => {
+    const progress = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    el.textContent = fmtCN(Math.round(previous + (total - previous) * eased));
+    if (progress < 1) {
+      heroNumberFrame = window.requestAnimationFrame(step);
+      return;
+    }
+    if (el.dataset) el.dataset.tokenValue = String(total);
+    heroNumberFrame = null;
+  };
+  heroNumberFrame = window.requestAnimationFrame(step);
+}
+
 async function getJSON(url) {
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) throw new Error(`${url} -> HTTP ${res.status}`);
@@ -231,9 +293,9 @@ function renderHero(p, day) {
   const total = p.total || 0;
   const rows = sourceRows(src, total);
 
-  document.getElementById('heroRange').textContent = `今日消耗 · ${day}`;
+  document.getElementById('heroRange').textContent = `${day} · 今日观测`;
   const heroEl = document.getElementById('heroTotal');
-  heroEl.textContent = fmtCN(total);
+  renderHeroTotal(heroEl, total);
   heroEl.title = fmt(total) + ' tokens';
   document.getElementById('heroCost').textContent = fmtCost(p.cost_usd);
 
@@ -249,6 +311,7 @@ function renderHero(p, day) {
       `<div class="split-row"><span class="dot" style="background:${row.color}"></span><span class="label">${esc(row.label)}</span>` +
       `<span class="value" title="${fmt(row.total)} tokens">${sourceTotal(row)}</span><span class="pct">${row.pct}%</span></div>`
     ).join('');
+  renderObservatorySources(rows);
 }
 
 // ---- 支撑数据卡（昨天/近7天/本月）----

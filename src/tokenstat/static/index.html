@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>Token 统计</title>
+<title>Token 观测台</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="/static/styles.css" />
 <script src="/static/chart.min.js"></script>
@@ -19,8 +19,8 @@
   <!-- Header -->
   <header class="header">
     <div class="brand-lockup">
-      <span class="brand-code">TOKEN LEDGER / 06</span>
-      <h1>Token 统计</h1>
+      <span class="brand-code">TOKEN OBSERVATORY / 07</span>
+      <h1>本地 Token 观测台</h1>
     </div>
     <div class="header-right">
       <div class="header-meta">
@@ -39,20 +39,29 @@
     <a href="#sessions">会话</a>
   </nav>
 
-  <!-- Hero -->
-  <section class="hero" id="overview">
-    <div class="hero-card">
-      <div class="hero-label" id="heroRange">今日消耗</div>
-      <div class="hero-number" id="heroTotal" title="">—</div>
-      <div class="hero-foot">
-        <span class="hero-cost">预估费用 <strong id="heroCost">¥—</strong></span>
+  <!-- Observatory -->
+  <section class="observatory" id="overview" aria-label="今日 Token 观测">
+    <div class="observatory-topline">
+      <span class="observatory-kicker">LIVE TOKEN SIGNAL</span>
+      <span class="observatory-range" id="heroRange">今日观测</span>
+      <span class="observatory-mode">ONLINE</span>
+    </div>
+    <div class="observatory-stage">
+      <div class="observatory-sources observatory-sources-left" id="obsSourcesLeft" aria-label="来源用量，左侧"></div>
+      <div class="observatory-core">
+        <img class="observatory-asset" src="/static/assets/observatory-hud.png" alt="" aria-hidden="true" />
+        <img class="observatory-orbit" src="/static/assets/observatory-hud.png" alt="" aria-hidden="true" />
+        <div class="observatory-readout">
+          <span class="readout-label">今日总消耗</span>
+          <strong class="readout-total" id="heroTotal" title="">—</strong>
+          <span class="readout-unit">TOKENS</span>
+          <span class="readout-cost">预估费用 <strong id="heroCost">¥—</strong></span>
+        </div>
       </div>
+      <div class="observatory-sources observatory-sources-right" id="obsSourcesRight" aria-label="来源用量，右侧"></div>
     </div>
-    <div class="hero-card">
-      <div class="hero-sub">各来源占比</div>
-      <div class="splitbar" id="heroSplitbar"></div>
-      <div class="split-legend" id="heroSplitLegend"></div>
-    </div>
+    <div class="observatory-scan" id="heroSplitbar" aria-hidden="true"></div>
+    <div class="observatory-source-sr" id="heroSplitLegend" aria-label="各来源用量明细"></div>
   </section>
 
   <!-- Stat cards -->
