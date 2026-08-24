@@ -17,11 +17,19 @@ from typing import Optional
 
 from . import config
 from . import pricing as pricing_mod
-from .models import CATEGORY_OBSERVER, SOURCE_CODEX, SOURCE_OPENCODE, VALID_SOURCES, _LOCAL_TZ, project_display
+from .models import (
+    CATEGORY_OBSERVER,
+    SOURCE_CODEX,
+    SOURCE_GROK,
+    SOURCE_OPENCODE,
+    VALID_SOURCES,
+    _LOCAL_TZ,
+    project_display,
+)
 
 
-# claude-mem 不是独立的模型供应商：它实际消耗 Codex 额度，但在仪表盘中必须
-# 从直接使用 Codex 的记录中拆开，才能既看见来源又不重复计数。
+# claude-mem 不是独立模型供应商：它可以调用 Codex 或 Grok，但在页面统一
+# 拆为一个展示来源，同时保留 by_source 的真实物理来源审计口径。
 CLAUDE_MEM_DISPLAY_SOURCE = "claude_mem"
 DISPLAY_SOURCES = (*VALID_SOURCES, CLAUDE_MEM_DISPLAY_SOURCE)
 
@@ -110,12 +118,15 @@ def _pricing_context_sql(pricing: dict) -> tuple[str, str]:
 
 
 def _claude_mem_sql(alias: str = "") -> str:
-    """返回识别 claude-mem Codex 用量的 SQL CASE 表达式。"""
+    """返回识别 claude-mem Codex/Grok 用量的 SQL CASE 表达式。"""
     prefix = f"{alias}." if alias else ""
     return (
-        f"CASE WHEN {prefix}source = '{SOURCE_CODEX}' "
-        f"AND {prefix}category = '{CATEGORY_OBSERVER}' "
-        f"AND {prefix}dedup_key LIKE 'claude-mem-codex:%' THEN 1 ELSE 0 END"
+        f"CASE WHEN {prefix}category = '{CATEGORY_OBSERVER}' AND ("
+        f"({prefix}source = '{SOURCE_CODEX}' AND "
+        f"{prefix}dedup_key LIKE 'claude-mem-codex:%') OR "
+        f"({prefix}source = '{SOURCE_GROK}' AND "
+        f"{prefix}dedup_key LIKE 'claude-mem-grok:%')"
+        f") THEN 1 ELSE 0 END"
     )
 
 
@@ -128,7 +139,7 @@ def _display_source_from_row(row: dict) -> str:
 
 
 def _display_source_label(row: dict) -> str:
-    return "claude-mem（Codex）" if row.get("claude_mem") else row["source"]
+    return "claude-mem" if row.get("claude_mem") else row["source"]
 
 
 def _grouped(
@@ -255,8 +266,8 @@ def breakdown(
     start, end = period_range(period)
     rows = _grouped(conn, start, end, pricing)
 
-    # claude-mem 的实际调用来源仍是 Codex；明细中单独列出，避免和普通 Codex
-    # 同模型行混在一起而看不出它的消耗。两组仍只各算一次，合计不变。
+    # claude-mem 的物理来源可以是 Codex 或 Grok；明细用 collector 单独标记，
+    # 页面展示为同一来源，物理来源仍保留用于审计，不重复计数。
     model_map: dict[tuple, dict] = {}
     proj_map: dict[tuple, dict] = {}
     for r in rows:

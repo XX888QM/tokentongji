@@ -341,6 +341,7 @@ class Handler(BaseHTTPRequestHandler):
             "openclaw": _path_status(config.OPENCLAW_SESSION_DIR),
             "hermes": _path_status(config.HERMES_STATE_DB),
             "grok": _path_status(config.GROK_LOG_PATH),
+            "claude_mem_grok": _path_status(config.CLAUDE_MEM_GROK_LOG_PATH),
         }
         path_available = {
             "claude": data["data_sources"]["claude"]["exists"],
@@ -348,7 +349,10 @@ class Handler(BaseHTTPRequestHandler):
             "opencode": data["data_sources"]["opencode"]["exists"],
             "openclaw": data["data_sources"]["openclaw"]["exists"],
             "hermes": data["data_sources"]["hermes"]["exists"],
-            "grok": data["data_sources"]["grok"]["exists"],
+            "grok": (
+                data["data_sources"]["grok"]["exists"]
+                or data["data_sources"]["claude_mem_grok"]["exists"]
+            ),
         }
         for source in data["sources"]:
             activity_date = source.get("activity_last_date") or source.get("last_date")

@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Iterator
 
 from . import config, db
-from .models import SOURCE_CLAUDE, SOURCE_CODEX, SOURCE_OPENCLAW
+from .models import CATEGORY_OBSERVER, SOURCE_CLAUDE, SOURCE_CODEX, SOURCE_OPENCLAW
 from .parsers import claude as claude_parser
 from .parsers import codex as codex_parser
 from .parsers import opencode as opencode_parser
@@ -190,9 +191,9 @@ def _ingest_hermes(conn) -> int:
     return db.insert_records(conn, records, on_conflict="replace")
 
 
-def _ingest_grok(conn) -> int:
+def _ingest_grok(conn, path=None, observer: bool = False) -> int:
     """增量解析 Grok unified.jsonl；model/cwd 按 sid carry-forward 并持久化到 ctx。"""
-    path = config.GROK_LOG_PATH
+    path = path or config.GROK_LOG_PATH
     if not path.is_file():
         return 0
     try:
@@ -231,6 +232,13 @@ def _ingest_grok(conn) -> int:
                     continue
                 rec = grok_parser.process_record(obj, source_file, line_start, gstate)
                 if rec is not None:
+                    if observer:
+                        rec = replace(
+                            rec,
+                            project="claude-mem",
+                            category=CATEGORY_OBSERVER,
+                            dedup_key=f"claude-mem-grok:{rec.dedup_key}",
+                        )
                     recs.append(rec)
     except OSError:
         return 0
@@ -331,9 +339,13 @@ def run_once() -> dict:
             records_added += _ingest_openclaw_v3_file(conn, path)
             files_scanned += 1
         db.delete_openclaw_cross_format_duplicates(conn)
-        if config.GROK_LOG_PATH.is_file():
-            records_added += _ingest_grok(conn)
-            files_scanned += 1
+        for path, observer in (
+            (config.GROK_LOG_PATH, False),
+            (config.CLAUDE_MEM_GROK_LOG_PATH, True),
+        ):
+            if path.is_file():
+                records_added += _ingest_grok(conn, path, observer)
+                files_scanned += 1
     finally:
         conn.close()
     return {"files_scanned": files_scanned, "records_added": records_added}

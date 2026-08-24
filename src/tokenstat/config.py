@@ -41,6 +41,13 @@ OPENCLAW_SESSION_DIR = HOME / ".openclaw" / "agents" / "main" / "sessions"
 HERMES_STATE_DB = HOME / ".hermes" / "state.db"
 # Grok CLI 统一日志（shell.turn.inference_done 带真实 token）
 GROK_LOG_PATH = Path(os.environ.get("TOKENSTAT_GROK_LOG", str(HOME / ".grok" / "logs" / "unified.jsonl")))
+# claude-mem 使用 Grok observer 时的隔离日志，同样带真实 token。
+CLAUDE_MEM_GROK_LOG_PATH = Path(
+    os.environ.get(
+        "TOKENSTAT_CLAUDE_MEM_GROK_LOG",
+        str(HOME / ".claude-mem" / "observer-grok-home" / "logs" / "unified.jsonl"),
+    )
+)
 
 # ---- 数据库 ----
 DATA_DIR = Path(os.environ.get("TOKENSTAT_DATA_DIR", str(Path(__file__).resolve().parent.parent.parent / "data")))

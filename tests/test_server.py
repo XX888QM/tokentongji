@@ -348,6 +348,7 @@ class TestIngestToApi(unittest.TestCase):
         self._sessions.mkdir()
         self._usage_dir = root / "usage"
         self._usage_dir.mkdir()
+        self._grok_observer_log = root / "claude-mem-grok.jsonl"
         self._config_patch = patch.multiple(
             "tokenstat.config",
             DATA_DIR=root / "data",
@@ -359,6 +360,7 @@ class TestIngestToApi(unittest.TestCase):
             OPENCLAW_SESSION_DIR=root / "openclaw",
             HERMES_STATE_DB=root / "hermes.db",
             GROK_LOG_PATH=root / "grok.jsonl",
+            CLAUDE_MEM_GROK_LOG_PATH=self._grok_observer_log,
         )
         self._config_patch.start()
 
@@ -395,9 +397,32 @@ class TestIngestToApi(unittest.TestCase):
             }) + "\n",
             encoding="utf-8",
         )
+        self._grok_observer_log.write_text(
+            "\n".join([
+                json.dumps({
+                    "ts": "2026-07-27T10:02:00Z", "sid": "mem-grok-session",
+                    "msg": "model changed", "ctx": {"model": "grok-4.6"},
+                }),
+                json.dumps({
+                    "ts": "2026-07-27T10:02:01Z", "sid": "mem-grok-session",
+                    "msg": "session created", "ctx": {
+                        "cwd": "/tmp/.claude-mem/observer-sessions/grok-test",
+                    },
+                }),
+                json.dumps({
+                    "ts": "2026-07-27T10:02:05Z", "sid": "mem-grok-session",
+                    "msg": "shell.turn.inference_done", "ctx": {
+                        "loop_index": 0, "prompt_tokens": 900,
+                        "cached_prompt_tokens": 200, "completion_tokens": 100,
+                        "reasoning_tokens": 50,
+                    },
+                }),
+            ]) + "\n",
+            encoding="utf-8",
+        )
 
         with patch("tokenstat.ingest.codex_parser.read_default_model", return_value="gpt-5.6-luna"):
-            self.assertEqual(ingest.run_once()["records_added"], 2)
+            self.assertEqual(ingest.run_once()["records_added"], 3)
             self.assertEqual(ingest.run_once()["records_added"], 0)
 
         with patch("tokenstat.aggregate._today_local", return_value=date(2026, 7, 27)):
@@ -408,21 +433,23 @@ class TestIngestToApi(unittest.TestCase):
 
         self.assertEqual((summary_code, daily_code, breakdown_code, export_code), (200, 200, 200, 200))
         today = summary["periods"]["today"]
-        self.assertEqual(today["total"], 1120)
+        self.assertEqual(today["total"], 2120)
         self.assertEqual(today["by_source"]["codex"]["total"], 1120)
+        self.assertEqual(today["by_source"]["grok"]["total"], 1000)
         self.assertEqual(today["by_display_source"]["codex"]["total"], 1000)
-        self.assertEqual(today["by_display_source"]["claude_mem"]["total"], 120)
+        self.assertEqual(today["by_display_source"]["claude_mem"]["total"], 1120)
         self.assertEqual(sum(row["total"] for row in today["by_display_source"].values()), today["total"])
-        self.assertEqual(daily["days"][0]["total"], 1120)
+        self.assertEqual(daily["days"][0]["total"], 2120)
         self.assertEqual(daily["days"][0]["codex"], 1000)
-        self.assertEqual(daily["days"][0]["claude_mem"], 120)
-        self.assertEqual(breakdown["total_tokens"], 1120)
+        self.assertEqual(daily["days"][0]["claude_mem"], 1120)
+        self.assertEqual(breakdown["total_tokens"], 2120)
         self.assertEqual(
             {(row["collector"], row["total"]) for row in breakdown["by_model"]},
-            {(None, 1000), ("claude-mem", 120)},
+            {(None, 1000), ("claude-mem", 120), ("claude-mem", 1000)},
         )
         self.assertIn(b"codex,,gpt-5.6-luna,/tmp/direct", exported)
         self.assertIn(b"codex,claude-mem,gpt-5.6-luna,/tmp/claude-mem", exported)
+        self.assertIn(b"grok,claude-mem,grok-4.6,claude-mem", exported)
 
 
 if __name__ == "__main__":
