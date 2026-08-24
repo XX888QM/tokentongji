@@ -1,7 +1,8 @@
 """Web 服务：静态仪表盘 + JSON API + 后台增量 ingest 线程。
 
 单进程：主线程跑 HTTP server，后台守护线程每 INGEST_INTERVAL 秒增量入库。
-只手动启动：项目在 ~/Desktop 下，macOS TCC 不让 launchd 进程读桌面文件。
+本机可用 LaunchAgent 自启：运行副本在 ~/Library/Application Support/tokenstat，
+不要让 launchd 直接读 ~/Desktop 下的仓库（TCC 会 Operation not permitted）。
 """
 
 from __future__ import annotations

@@ -50,7 +50,12 @@ CLAUDE_MEM_GROK_LOG_PATH = Path(
 )
 
 # ---- 数据库 ----
-DATA_DIR = Path(os.environ.get("TOKENSTAT_DATA_DIR", str(Path(__file__).resolve().parent.parent.parent / "data")))
+# LaunchAgent 副本在 ~/Library/Application Support/tokenstat（避开桌面 TCC）。
+# 装过自启后优先用那份库，避免终端手动启动又写回项目 data/ 形成两套账。
+_REPO_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"
+_APP_SUPPORT_DATA_DIR = HOME / "Library" / "Application Support" / "tokenstat" / "data"
+_DEFAULT_DATA_DIR = _APP_SUPPORT_DATA_DIR if _APP_SUPPORT_DATA_DIR.is_dir() else _REPO_DATA_DIR
+DATA_DIR = Path(os.environ.get("TOKENSTAT_DATA_DIR", str(_DEFAULT_DATA_DIR)))
 DB_PATH = DATA_DIR / "tokenstat.db"
 
 # ---- Web 服务 ----

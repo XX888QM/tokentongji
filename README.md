@@ -58,16 +58,22 @@ open http://127.0.0.1:8787
 
 claude-mem 不是另一份 Codex 额度：它调用的就是 Codex 额度。为让你看清“它到底用了多少”，页面把物理 Codex 记录拆成两个**展示来源**：`Codex（直接）` 和 `claude-mem（Codex 额度）`。两者相加才是原始 Codex 总量；总览、周期卡、趋势、拆分明细、会话和 CSV 都使用同一套拆分，**不会重复算进总 token 或费用**。运行审计仍按真实物理来源 Codex 判断采集健康。
 
-## 启动方式（手动，无开机自启）
+## 启动方式
 
-服务只在终端里手动启动，日志写到 `data/tokenstat.log` / `data/tokenstat.err.log`。
+本机按 LaunchAgent 开机自启（`com.yunxin.tokenstat`，登录即拉起、挂了会重启）。macOS 不让 launchd 读桌面上的仓库，安装脚本会把代码和库拷到 `~/Library/Application Support/tokenstat/`，服务跑这份副本。
 
-本项目**不提供开机自启**：项目位于 `~/Desktop` 下，而 macOS 的隐私保护（TCC）不允许 launchd 启动的后台进程读取桌面里的文件——实测报 `Operation not permitted`，服务直接以 `EX_CONFIG`(78) 退出。终端手动启动继承终端 App 的授权，不受影响。若确实需要开机自启，得先把项目挪出 `~/Desktop`，或在「系统设置 → 隐私与安全性 → 完全磁盘访问」里给 Python 解释器授权。
+```bash
+bash scripts/install-launchd.sh    # 安装/更新并立刻启动
+# → http://127.0.0.1:8787
+bash scripts/uninstall-launchd.sh  # 只卸自启，不删库
+```
+
+改完仓库后要再跑一次安装脚本，自启副本才会更新。日志在 `~/Library/Logs/tokenstat/`。也可以在终端手动：`PYTHONPATH=src python3 -m tokenstat.server`（已装自启时会共用 Application Support 里那份库）。
 
 ## 数据保留与导出
 
-- 所有已统计记录都在 `data/tokenstat.db`。删除 Claude、Codex 等原始日志不会自动删除数据库中的历史统计。
-- 页面“备份数据库”会创建 `data/backups/tokenstat-*.db` 的独立副本；需要重建或清理数据前先备份。
+- 已装本机自启时，活库在 `~/Library/Application Support/tokenstat/data/tokenstat.db`；未装则用项目里的 `data/tokenstat.db`。删除 Claude、Codex 等原始日志不会自动删除数据库中的历史统计。
+- 页面“备份数据库”会在对应数据目录下创建 `backups/tokenstat-*.db`；需要重建或清理数据前先备份。
 - 页面“立即核对”只做一次增量扫描，不会清库；“导出当前 CSV”输出当前周期的来源、采集来源（`collector`）、模型、项目和费用明细。普通记录的 `collector` 为空，claude-mem 记录为 `claude-mem`。
 
 ## 配置（环境变量）
@@ -79,7 +85,7 @@ claude-mem 不是另一份 Codex 额度：它调用的就是 Codex 额度。为�
 | `TOKENSTAT_INGEST_INTERVAL` | 60 | 后台 ingest 间隔（秒），须为正整数 |
 | `TOKENSTAT_REFRESH` | 30 | 页面自动刷新（秒），须为正整数 |
 | `TOKENSTAT_STALE_DAYS` | 3 | 来源无新数据或落后其他来源多少天后告警，须为正整数 |
-| `TOKENSTAT_DATA_DIR` | `./data` | SQLite 与日志目录 |
+| `TOKENSTAT_DATA_DIR` | 已装自启则为 `~/Library/Application Support/tokenstat/data`，否则 `./data` | SQLite 与备份目录 |
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 统一日志路径 |
 | `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex 单次真实用量 JSONL 目录 |
 

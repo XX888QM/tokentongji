@@ -54,11 +54,16 @@ open http://127.0.0.1:8787
 
 claude-mem이 쓰는 것은 Codex 할당량이며 추가 Codex 사용량이 아닙니다. 대시보드는 물리 Codex를 `Codex（직접）`과 `claude-mem（Codex 할당량）`이라는 두 **표시 소스**로 나눕니다. 두 값을 합친 것이 물리 Codex 사용량이며 총 token과 비용에 중복 합산되지 않습니다. 소스 비중, 기간 카드, 추이, 상세, 세션, CSV는 같은 분리를 사용하고 실행 감사는 물리 Codex를 확인합니다.
 
-## 수동 시작(launchd 없음)
+## 시작 방법
 
-서비스는 터미널에서 수동으로 시작하며 로그는 `data/tokenstat.log` / `data/tokenstat.err.log`에 기록됩니다.
+이 Mac에서는 LaunchAgent(`com.yunxin.tokenstat`)로 로그인 시 자동 시작합니다. launchd는 `~/Desktop`을 읽지 못하므로 설치 스크립트가 코드와 DB를 `~/Library/Application Support/tokenstat/`로 복사합니다.
 
-프로젝트가 `~/Desktop` 아래에 있으므로 macOS TCC는 launchd 백그라운드 프로세스의 Desktop 파일 읽기를 막습니다(`Operation not permitted`, `EX_CONFIG` 78로 종료). 터미널 시작은 터미널 앱의 권한을 상속합니다. 프로젝트를 `~/Desktop` 밖으로 옮기거나 Python에 전체 디스크 접근 권한을 주기 전에는 자동 시작을 추가하지 마세요.
+```bash
+bash scripts/install-launchd.sh
+# → http://127.0.0.1:8787
+```
+
+저장소를 수정한 뒤에는 설치 스크립트를 다시 실행하세요. 로그: `~/Library/Logs/tokenstat/`.
 
 ## 설정
 
@@ -69,7 +74,7 @@ claude-mem이 쓰는 것은 Codex 할당량이며 추가 Codex 사용량이 아�
 | `TOKENSTAT_INGEST_INTERVAL` | 60 | 백그라운드 수집 간격(초), 양수여야 함 |
 | `TOKENSTAT_REFRESH` | 30 | 화면 새로고침 간격(초), 양수여야 함 |
 | `TOKENSTAT_STALE_DAYS` | 3 | 소스에 새 데이터가 없거나 다른 소스보다 뒤처질 때 경고할 일수 |
-| `TOKENSTAT_DATA_DIR` | `./data` | SQLite 및 로그 디렉터리 |
+| `TOKENSTAT_DATA_DIR` | 자동 시작 설치 후 Application Support, 아니면 `./data` | SQLite 및 백업 디렉터리 |
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 통합 로그 경로 |
 | `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex 단일 사용량 JSONL 디렉터리 |
 

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 模板：__SUPPORT_DIR__ 由 scripts/install-launchd.sh 替换为
+     ~/Library/Application Support/tokenstat。不要把 WorkingDirectory /
+     PYTHONPATH 指到 ~/Desktop：launchd 子进程读桌面会 Operation not permitted。 -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.yunxin.tokenstat</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__SUPPORT_DIR__/start.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__SUPPORT_DIR__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>ExitTimeOut</key>
+    <integer>15</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/tokenstat/out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/tokenstat/err.log</string>
+</dict>
+</plist>

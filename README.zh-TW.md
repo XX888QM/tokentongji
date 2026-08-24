@@ -54,11 +54,16 @@ open http://127.0.0.1:8787
 
 claude-mem 使用的是 Codex 額度，不是額外的一份 Codex 用量。儀表板把物理 Codex 拆成兩個**展示來源**：`Codex（直接）` 與 `claude-mem（Codex 額度）`。兩者相加才是實體 Codex 用量，不會重複計入總 token 或費用；來源占比、週期卡、趨勢、明細、會話與 CSV 都共用這個拆分，運行稽核仍檢查實體 Codex。
 
-## 手動啟動（無 launchd）
+## 啟動方式
 
-服務只從終端機手動啟動，日誌為 `data/tokenstat.log` / `data/tokenstat.err.log`。
+本機以 LaunchAgent（`com.yunxin.tokenstat`）登入自啟。launchd 不能讀 `~/Desktop`，安裝腳本會把程式與資料庫拷到 `~/Library/Application Support/tokenstat/`。
 
-專案位於 `~/Desktop` 下，macOS TCC 會阻擋 launchd 背景程序讀取桌面檔案（`Operation not permitted`，服務以 `EX_CONFIG` 78 結束）；終端機程序會繼承終端機 App 的授權。除非把專案移出 `~/Desktop` 或給 Python 完整磁碟存取權，否則不要加入開機自啟。
+```bash
+bash scripts/install-launchd.sh
+# → http://127.0.0.1:8787
+```
+
+改完倉庫後需再跑一次安裝腳本。日誌：`~/Library/Logs/tokenstat/`。
 
 ## 設定
 
@@ -69,7 +74,7 @@ claude-mem 使用的是 Codex 額度，不是額外的一份 Codex 用量。儀�
 | `TOKENSTAT_INGEST_INTERVAL` | 60 | 背景 ingest 間隔（秒），必須為正數 |
 | `TOKENSTAT_REFRESH` | 30 | 頁面更新間隔（秒），必須為正數 |
 | `TOKENSTAT_STALE_DAYS` | 3 | 來源無新資料或落後其他來源多少天後發出警示 |
-| `TOKENSTAT_DATA_DIR` | `./data` | SQLite 與日誌目錄 |
+| `TOKENSTAT_DATA_DIR` | 已裝自啟則為 Application Support，否則 `./data` | SQLite 與備份目錄 |
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 統一日誌路徑 |
 | `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex 單次用量 JSONL 目錄 |
 

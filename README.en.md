@@ -54,11 +54,16 @@ Costs are displayed in CNY. The page immediately uses a cached exchange rate (7.
 
 claude-mem uses Codex quota; it is not an additional Codex charge. The dashboard separates physical Codex data into two **display sources**: `Codex (direct)` and `claude-mem (Codex quota)`. They always add up to physical Codex usage, without double-counting totals or costs. Source share, period cards, trend, details, sessions, and CSV use the same split; runtime audit still checks physical Codex.
 
-## Manual startup (no launchd)
+## Startup
 
-Start the service from a terminal. Logs are written to `data/tokenstat.log` / `data/tokenstat.err.log`.
+On this Mac the dashboard is a LaunchAgent (`com.yunxin.tokenstat`). launchd cannot read `~/Desktop`, so `scripts/install-launchd.sh` copies code and the DB to `~/Library/Application Support/tokenstat/` and points the plist at that copy.
 
-This project is under `~/Desktop`. macOS TCC blocks a launchd background process from reading Desktop files (`Operation not permitted`, service exits with `EX_CONFIG` 78), while a terminal process inherits the terminal app's permission. Do not add login-start automation unless the project is moved out of `~/Desktop` or the Python interpreter has Full Disk Access.
+```bash
+bash scripts/install-launchd.sh
+# → http://127.0.0.1:8787
+```
+
+Re-run the install script after changing the repo. Logs: `~/Library/Logs/tokenstat/`.
 
 ## Configuration
 
@@ -69,7 +74,7 @@ This project is under `~/Desktop`. macOS TCC blocks a launchd background process
 | `TOKENSTAT_INGEST_INTERVAL` | 60 | Background ingest interval in seconds; must be positive |
 | `TOKENSTAT_REFRESH` | 30 | Dashboard refresh interval in seconds; must be positive |
 | `TOKENSTAT_STALE_DAYS` | 3 | Warn after a source has no new data, or trails other sources, by this many days |
-| `TOKENSTAT_DATA_DIR` | `./data` | SQLite and log directory |
+| `TOKENSTAT_DATA_DIR` | Application Support copy after install, else `./data` | SQLite and backup directory |
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok unified log path |
 | `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | Directory containing claude-mem Codex one-shot usage JSONL files |
 
