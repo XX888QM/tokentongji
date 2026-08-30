@@ -43,10 +43,16 @@ if pgrep -f "python3 -m tokenstat.server" >/dev/null 2>&1; then
   sleep 1
 fi
 
-if [[ -f "$APP_DIR/data/tokenstat.db" ]]; then
+# 只在首装（运行副本还没有库）时把桌面库迁过去当种子。
+# 运行副本一旦建立，它才是唯一真值：桌面 data/ 那份是旧快照，
+# 无条件 cp 会把自启进程后来采集到的历史整段抹掉（不可逆）。
+if [[ -f "$APP_DIR/data/tokenstat.db" && ! -f "$SUPPORT_DIR/data/tokenstat.db" ]]; then
   sqlite3 "$APP_DIR/data/tokenstat.db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 || true
   cp "$APP_DIR/data/tokenstat.db" "$SUPPORT_DIR/data/tokenstat.db"
   rm -f "$SUPPORT_DIR/data/tokenstat.db-wal" "$SUPPORT_DIR/data/tokenstat.db-shm"
+  echo "首装：已用仓库 data/tokenstat.db 作为运行副本的初始库。"
+elif [[ -f "$SUPPORT_DIR/data/tokenstat.db" ]]; then
+  echo "运行副本已有库，保留不覆盖：$SUPPORT_DIR/data/tokenstat.db"
 fi
 
 sed -e "s|__SUPPORT_DIR__|$SUPPORT_DIR|g" -e "s|__HOME__|$HOME|g" "$TEMPLATE" > "$PLIST_DST"

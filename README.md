@@ -60,7 +60,7 @@ claude-mem 不是另一份 Codex 额度：它调用的就是 Codex 额度。为�
 
 ## 启动方式
 
-本机按 LaunchAgent 开机自启（`com.yunxin.tokenstat`，登录即拉起、挂了会重启）。macOS 不让 launchd 读桌面上的仓库，安装脚本会把代码和库拷到 `~/Library/Application Support/tokenstat/`，服务跑这份副本。
+本机按 LaunchAgent 开机自启（`com.yunxin.tokenstat`，登录即拉起、挂了会重启）。macOS 不让 launchd 读桌面上的仓库，安装脚本会把代码拷到 `~/Library/Application Support/tokenstat/`，服务跑这份副本。数据库只在首装时从项目 `data/` 迁一份过去，之后重跑脚本不会覆盖副本里的库。
 
 ```bash
 bash scripts/install-launchd.sh    # 安装/更新并立刻启动

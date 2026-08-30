@@ -34,30 +34,23 @@ class TestNormalization(unittest.TestCase):
         self.assertEqual(pricing.rates_for_model("claude-haiku-4-5", self.p)["input"], 1.0)
 
     def test_sonnet_5(self):
-        r = pricing.rates_for_model("claude-sonnet-5", self.p, priced_at=date(2026, 8, 31))
-        self.assertEqual(r["input"], 2.0)
-        self.assertEqual(r["cache_read"], 0.20)
-        self.assertEqual(r["output"], 10.0)
-        self.assertEqual(r["cache_write"], 2.50)
-        r = pricing.rates_for_model(
-            "claude-sonnet-5", self.p, cache_window="1h", priced_at=date(2026, 8, 31)
-        )
-        self.assertEqual(r["cache_write"], 4.0)
-        r = pricing.rates_for_model("claude-sonnet-5", self.p, priced_at=date(2026, 9, 1))
-        self.assertEqual(r["input"], 3.0)
-        self.assertEqual(r["cache_read"], 0.30)
-        self.assertEqual(r["output"], 15.0)
-        self.assertEqual(r["cache_write"], 3.75)
-        r = pricing.rates_for_model(
-            "claude-sonnet-5", self.p, cache_window="1h", priced_at=date(2026, 9, 1)
-        )
-        self.assertEqual(r["cache_write"], 6.0)
+        # 官方已取消原定 2026-09-01 的涨价，$2/$10 就是标准价：跨 9/1 不得变动
+        for when in (date(2026, 8, 31), date(2026, 9, 1), date(2027, 1, 1)):
+            r = pricing.rates_for_model("claude-sonnet-5", self.p, priced_at=when)
+            self.assertEqual(r["input"], 2.0, when)
+            self.assertEqual(r["cache_read"], 0.20, when)
+            self.assertEqual(r["output"], 10.0, when)
+            self.assertEqual(r["cache_write"], 2.50, when)
+            r1h = pricing.rates_for_model(
+                "claude-sonnet-5", self.p, cache_window="1h", priced_at=when
+            )
+            self.assertEqual(r1h["cache_write"], 4.0, when)
 
     def test_unmatched_sonnet_family_falls_back_to_sonnet_5_not_4_6(self):
         # 未来未收录的 sonnet 变体（不含 claude-sonnet-5 前缀）应通过家族兜底
         # 归到最新的 sonnet-5，而非旧的 sonnet-4-6
         r = pricing.rates_for_model("claude-sonnet-6", self.p, priced_at=date(2026, 9, 1))
-        self.assertEqual(r["input"], 3.0)
+        self.assertEqual(r["input"], 2.0)
 
     def test_region_prefix_and_suffix_stripped(self):
         r = pricing.rates_for_model("us.anthropic.claude-opus-4-8[1m]", self.p)
@@ -73,7 +66,7 @@ class TestNormalization(unittest.TestCase):
         self.assertEqual(pricing.rates_for_model("gpt-5.4", self.p)["input"], 2.5)
 
     def test_gpt56_flagship_pricing(self):
-        sol = pricing.rates_for_model("gpt-5.6-sol", self.p)
+        sol = pricing.rates_for_model("gpt-5.6-sol", self.p, priced_at=date(2026, 8, 20))
         self.assertEqual(sol["input"], 5.0)
         self.assertEqual(sol["output"], 30.0)
         for model, short, long in (
@@ -91,10 +84,51 @@ class TestNormalization(unittest.TestCase):
                 (long_rates["input"], long_rates["cache_read"], long_rates["cache_write"], long_rates["output"]), long
             )
 
+    def test_gpt56_sol_price_cut_2026_08_21(self):
+        # OpenAI 于 2026-08-21 下调 Sol：$5/$30 → $4/$20，历史行必须仍按旧价
+        before = pricing.rates_for_model(
+            "gpt-5.6-sol", self.p, cache_window="30m", priced_at=date(2026, 8, 20)
+        )
+        after = pricing.rates_for_model(
+            "gpt-5.6-sol", self.p, cache_window="30m", priced_at=date(2026, 8, 21)
+        )
+        self.assertEqual(
+            (before["input"], before["cache_read"], before["cache_write"], before["output"]),
+            (5.0, 0.50, 6.25, 30.0),
+        )
+        self.assertEqual(
+            (after["input"], after["cache_read"], after["cache_write"], after["output"]),
+            (4.0, 0.40, 5.0, 20.0),
+        )
+        long_after = pricing.rates_for_model(
+            "gpt-5.6-sol", self.p, cache_window="30m", long_context=True,
+            priced_at=date(2026, 8, 21),
+        )
+        self.assertEqual(
+            (long_after["input"], long_after["cache_read"], long_after["cache_write"], long_after["output"]),
+            (8.0, 0.80, 10.0, 30.0),
+        )
+        # 降价后长上下文阈值不能丢
+        self.assertEqual(
+            pricing.long_context_threshold_for_model("gpt-5.6-sol", self.p, date(2026, 8, 21)),
+            272000,
+        )
+
     def test_mythos_same_as_fable(self):
         r = pricing.rates_for_model("claude-mythos-5", self.p)
         self.assertEqual(r["input"], 10.0)
         self.assertEqual(r["output"], 50.0)
+
+    def test_grok_4_6_priced_explicitly(self):
+        # grok-4.6 必须走精确价目（cache_read $0.50），不能再兜底套 4.5 的 $0.30
+        r = pricing.rates_for_model("grok-4.6", self.p)
+        self.assertEqual((r["input"], r["cache_read"], r["output"]), (2.0, 0.50, 6.0))
+        long = pricing.rates_for_model("grok-4.6", self.p, long_context=True)
+        self.assertEqual((long["input"], long["cache_read"], long["output"]), (4.0, 1.00, 12.0))
+        self.assertFalse(pricing.is_unknown_model("grok-4.6", self.p))
+        # 家族兜底应指向最新的 4.6，而不是旧版本
+        future = pricing.rates_for_model("grok-4.7", self.p)
+        self.assertEqual((future["input"], future["cache_read"], future["output"]), (2.0, 0.50, 6.0))
 
     def test_grok_pricing(self):
         r = pricing.rates_for_model("grok-4.5", self.p)
@@ -122,9 +156,12 @@ class TestNormalization(unittest.TestCase):
             self.assertEqual((r["input"], r["cache_read"], r["output"]), (0.14, 0.0028, 0.28), alias)
 
     def test_openai_30m_cache_write_and_pro_cache_read(self):
-        sol = pricing.rates_for_model("gpt-5.6-sol", self.p, cache_window="30m")
+        before = date(2026, 8, 20)
+        sol = pricing.rates_for_model("gpt-5.6-sol", self.p, cache_window="30m", priced_at=before)
         self.assertEqual(sol["cache_write"], 6.25)
-        long_sol = pricing.rates_for_model("gpt-5.6-sol", self.p, cache_window="30m", long_context=True)
+        long_sol = pricing.rates_for_model(
+            "gpt-5.6-sol", self.p, cache_window="30m", long_context=True, priced_at=before
+        )
         self.assertEqual(long_sol["cache_write"], 12.50)
         pro = pricing.rates_for_model("gpt-5.4-pro", self.p)
         self.assertEqual(pro["cache_read"], 30.0)

@@ -117,7 +117,7 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
         # gpt-5.x 未精确命中时：优先新 flagship，再退基础款
         return pick("gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5")
     if clean.startswith("grok"):
-        return pick("grok-4.5", "grok-4.3", "grok-build-0.1")
+        return pick("grok-4.6", "grok-4.5", "grok-4.3", "grok-build-0.1")
     return None
 
 
