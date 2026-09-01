@@ -90,7 +90,7 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
         return None
 
     if clean.startswith("claude-fable") or clean.startswith("claude-mythos"):
-        return pick("claude-fable-5", "claude-mythos-5")
+        return pick("claude-fable-5-1", "claude-mythos-5-1", "claude-fable-5", "claude-mythos-5")
     if clean.startswith("claude-opus-4-1"):
         return pick("claude-opus-4-1")
     if clean.startswith(("claude-opus-4-0", "claude-opus-4-20")):

@@ -119,6 +119,21 @@ class TestNormalization(unittest.TestCase):
         self.assertEqual(r["input"], 10.0)
         self.assertEqual(r["output"], 50.0)
 
+    def test_fable_5_1_cheaper_cache_read_than_5(self):
+        # Fable/Mythos 5.1 的 input/output/cache_write 与 5 代相同，
+        # 只有 cache_read 从 0.1x（$1）降到 0.025x（$0.25）
+        for m in ("claude-fable-5-1", "claude-mythos-5-1"):
+            r = pricing.rates_for_model(m, self.p)
+            self.assertEqual((r["input"], r["output"], r["cache_write"]), (10.0, 50.0, 12.50), m)
+            self.assertEqual(r["cache_read"], 0.25, m)
+        # 5 代精确条目必须保持原样，不能被 5.1 的兜底顺序污染
+        old = pricing.rates_for_model("claude-fable-5", self.p)
+        self.assertEqual(old["cache_read"], 1.00)
+        # 未来未收录的 fable 版本应兜底到最新的 5.1，而非旧的 5
+        future = pricing.rates_for_model("claude-fable-6", self.p)
+        self.assertEqual(future["cache_read"], 0.25)
+        self.assertFalse(pricing.is_unknown_model("claude-fable-5-1", self.p))
+
     def test_grok_4_6_priced_explicitly(self):
         # grok-4.6 必须走精确价目（cache_read $0.50），不能再兜底套 4.5 的 $0.30
         r = pricing.rates_for_model("grok-4.6", self.p)
