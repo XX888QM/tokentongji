@@ -147,13 +147,25 @@ def long_context_threshold_for_model(
 
 
 def long_context_thresholds(pricing: dict) -> tuple[int, ...]:
-    """返回价表内所有长上下文阈值，供聚合层按请求分桶。"""
-    thresholds = {
-        threshold
-        for model in _merged_models(pricing)
-        for threshold in [long_context_threshold_for_model(model, pricing)]
-        if threshold is not None
-    }
+    """返回价表内所有长上下文阈值（含 next_pricing 可能引入的历史/未来阈值），
+    供聚合层按请求分桶生成 SQL 列。
+
+    不能只取"今天"生效的阈值：如果某模型的 next_pricing.long_context.threshold
+    与基础 long_context.threshold 不同，只收今天的那个会导致另一个阈值在 SQL 里
+    没有对应列，聚合层按历史计价日查到的阈值就会落空、静默按基础价算（不区分
+    高估/低估）。这里直接扫每个模型的 raw 和 next_pricing 两份 long_context，
+    把两边的阈值都收进来，不依赖 priced_at。
+    """
+    thresholds = set()
+    for raw in _merged_models(pricing).values():
+        for section in (raw, raw.get("next_pricing") or {}):
+            threshold = (section.get("long_context") or {}).get("threshold")
+            if threshold is None:
+                continue
+            try:
+                thresholds.add(int(threshold))
+            except (TypeError, ValueError):
+                continue
     return tuple(sorted(thresholds))
 
 
@@ -185,8 +197,18 @@ def rates_for_model(
         "30m": "cache_write_30m",
     }.get(cache_window, "cache_write_5m")
     cache_write = raw.get(cw_key)
-    if cache_write is None and cw_key != "cache_write_30m":
-        cache_write = raw.get("cache_write_30m")
+    if cache_write is None:
+        # 请求的档位这个模型没定义时，退到该模型确实定义了的档位，而不是静默
+        # 按 0 算——之前的写法在 cache_window="30m" 时 cw_key 本身就是
+        # "cache_write_30m"，"cw_key != cache_write_30m" 恒假，这条兜底永远不
+        # 会执行，导致没配 30m 价目的模型（现在除 3 个 GPT-5.6 系列外全部）在
+        # 30m 场景下缓存写入直接算成 0。
+        for fallback_key in ("cache_write_5m", "cache_write_30m", "cache_write_1h"):
+            if fallback_key == cw_key:
+                continue
+            cache_write = raw.get(fallback_key)
+            if cache_write is not None:
+                break
     return {
         "input": raw.get("input", 0.0) or 0.0,
         "output": raw.get("output", 0.0) or 0.0,

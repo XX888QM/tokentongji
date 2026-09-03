@@ -3,6 +3,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from tokenstat.parsers import opencode
@@ -118,6 +119,37 @@ class TestOpencodeParser(unittest.TestCase):
         ])
         recs, _ = opencode.fetch_records(self.db, 0)
         self.assertEqual(recs[0].total_tokens, 999)
+
+    def test_locked_db_returns_empty_instead_of_raising(self):
+        # opencode 正在写事务持锁时，_open_ro 的 connect() 本身不会报错
+        # （只读连接、SQLite 懒加锁），真正的锁冲突在第一次 execute() 才暴露。
+        # 之前 fetch_records() 只包了 connect()，execute() 没有 except，会让
+        # sqlite3.OperationalError 一路冒出去，级联影响同批次排在后面的来源。
+        # 用 mock 直接让 execute() 抛错，而不是真起一个持锁连接等 busy_timeout
+        # （那样每条用例要空等 5 秒，拖慢整个套件）。
+        _make_db(self.db, [("m1", "s1", 1000, _assistant(inp=10, out=5))])
+        real_connect = sqlite3.connect
+
+        class _LockedOnExecute:
+            """sqlite3.Connection 是 C 类型，实例属性只读，包一层代理来伪造
+            "connect 成功、第一次 execute 才炸"这个真实时序。"""
+
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, *a, **kw):
+                raise sqlite3.OperationalError("database is locked")
+
+            def close(self):
+                self._real.close()
+
+        def fake_connect(*args, **kwargs):
+            return _LockedOnExecute(real_connect(*args, **kwargs))
+
+        with unittest.mock.patch.object(opencode.sqlite3, "connect", side_effect=fake_connect):
+            recs, max_ts = opencode.fetch_records(self.db, since_ts_ms=0)
+        self.assertEqual(recs, [])
+        self.assertEqual(max_ts, 0)  # 原样返回起点，下一轮重试
 
     def test_missing_db_returns_empty(self):
         recs, max_ts = opencode.fetch_records(Path(self.tmp.name) / "nope.db", 42)

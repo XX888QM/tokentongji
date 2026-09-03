@@ -133,10 +133,16 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
     added = 0
     if legacy_claude_keys:
         recs = [r for r in recs if r.dedup_key not in legacy_claude_keys]
-        db.delete_dedup_keys(conn, SOURCE_CLAUDE, legacy_claude_keys)
+        # 删旧临时行 + 写新 iteration 行必须原子生效（commit=False 合并成一次
+        # commit）：分两次提交的话，进程恰好在两次 commit 之间被杀会留下"旧行
+        # 已删、新行未写"的短暂空窗，该消息的用量会短暂从统计里消失（下一轮
+        # ingest 会重新处理同一行补齐，只是重启前有个偏低的窗口）。
+        db.delete_dedup_keys(conn, SOURCE_CLAUDE, legacy_claude_keys, commit=False)
     if recs:
         on_conflict = "max" if source == SOURCE_CLAUDE else "ignore"
-        added += db.insert_records(conn, recs, on_conflict=on_conflict)
+        added += db.insert_records(conn, recs, on_conflict=on_conflict, commit=False)
+    if legacy_claude_keys or recs:
+        conn.commit()
 
     new_ctx = cstate.to_ctx() if cstate is not None else {}
     db.set_ingest_state(

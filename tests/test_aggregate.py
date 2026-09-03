@@ -228,6 +228,40 @@ class TestLongContextPricing(unittest.TestCase):
         self.assertEqual(len(rows), 1)  # 对外导出仍保持来源/模型/项目一行
         self.assertAlmostEqual(rows[0]["cost_usd"], 0.62, places=8)
 
+    def test_historical_threshold_column_exists_when_next_pricing_changes_threshold(self):
+        # 模型的长上下文门槛本身随 next_pricing 变了（不只是价格变了）：旧门槛
+        # 100000，"今天"生效的新门槛是 200000。历史行落在旧门槛生效期间，必须
+        # 按旧门槛 100000 判长上下文——如果 _pricing_context_sql() 只按"今天"的
+        # 阈值生成 SQL 列（漏了 100000 这一列），这条历史行会因为找不到对应列
+        # 而静默按基础价算，少收钱。
+        pricing_dict = {
+            "default": {"input": 1, "output": 1, "cache_read": 1, "cache_write_5m": 1},
+            "openai": {
+                "gpt-hist": {
+                    "input": 1, "output": 1, "cache_read": 1, "cache_write_5m": 1,
+                    "long_context": {"threshold": 100_000, "input": 5, "output": 5, "cache_read": 5},
+                    "next_pricing": {
+                        "starts_on": "2026-08-01",
+                        "input": 1, "output": 1, "cache_read": 1,
+                        "long_context": {"threshold": 200_000, "input": 9, "output": 9, "cache_read": 9},
+                    },
+                }
+            },
+        }
+        db.insert_records(self.conn, [
+            UsageRecord(
+                ts=_ts("2026-07-15"), source="codex", model="gpt-hist", project="/p",
+                input_tokens=150_000, total_tokens=150_000,
+                request_prompt_tokens=150_000, dedup_key="pre-cutover",
+            ),
+        ])
+        with patch("tokenstat.aggregate._today_local", return_value=date(2026, 7, 15)):
+            summary = aggregate.summary(self.conn, pricing_dict)["periods"]["today"]
+
+        # 150,000 落在旧门槛(100000)之上 -> 应按旧长上下文价 $5/M 算 = $0.75，
+        # 不能因为 SQL 缺列而落到基础价 $1/M（$0.15）。
+        self.assertAlmostEqual(summary["cost_usd"], 0.75, places=8)
+
 
 class TestTopSessions(unittest.TestCase):
     """回归：同 session_id 跨 source/model/project 时展示最大 token 分组的属性。"""

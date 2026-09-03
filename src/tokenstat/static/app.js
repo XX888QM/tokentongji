@@ -674,6 +674,10 @@ async function refreshAll() {
     return sec;
   } catch (e) {
     document.getElementById('meta').textContent = '加载失败: ' + e.message;
+    // loadSummary() 一旦失败，下面 Promise.all 里的 loadAudit() 根本不会跑，
+    // #liveStatus 会停在上一轮成功状态，和这里刚写的"加载失败"文案互相矛盾。
+    // 显式打成需关注，两处文案才对得上。
+    setHeaderHealth('error');
     return 30;
   }
 }
@@ -689,8 +693,11 @@ function setupPeriodToggle() {
     sessionStorage.setItem('tokenstat_period', currentPeriod);
     renderPeriodState();
     projectPage = 0;  // 切周期回到第 1 页（定时刷新不重置，避免打断翻页浏览）
-    loadBreakdown();
-    loadTopSessions();
+    // 按钮高亮是同步切的，下面两个请求若失败，不能让表格悄悄停在旧周期的
+    // 数据却不吭声——那样"选中的周期"和"表格显示的周期"会对不上、误导用户。
+    Promise.all([loadBreakdown(), loadTopSessions()]).catch((e) => {
+      document.getElementById('meta').textContent = '切换周期加载失败: ' + e.message;
+    });
     sessionDetailSeq++;
     document.getElementById('sessionDetail').hidden = true;
     document.getElementById('sessionDetail').innerHTML = '';

@@ -189,6 +189,22 @@ class TestNormalization(unittest.TestCase):
         self.assertEqual(r5["cache_write"], 6.25)
         self.assertEqual(r1["cache_write"], 10.0)
 
+    def test_30m_cache_window_falls_back_to_5m_not_zero(self):
+        # claude-opus-4-7 没配 cache_write_30m。旧写法里 cw_key 本身就是
+        # "cache_write_30m"，兜底条件恒假，永远拿不到值，最后静默算成 0。
+        r = pricing.rates_for_model("claude-opus-4-7", self.p, cache_window="30m")
+        self.assertEqual(r["cache_write"], 6.25)  # 退到该模型的 5m 价，不是 0
+        # grok 系列价表里 cache_write_5m/1h 都显式是 null（xAI 缓存没有独立写入
+        # 计费），任何窗口都应该是 0——这是价表本身的意图，不是兜底没生效。
+        rg = pricing.rates_for_model("grok-4.6", self.p, cache_window="30m")
+        self.assertEqual(rg["cache_write"], 0.0)
+        # 有 30m 价目的模型（gpt-5.6-sol）请求 30m 时必须精确命中，不受兜底影响
+        # （用降价前的历史日期锚定，避免和 next_pricing 生效日期产生歧义）
+        sol = pricing.rates_for_model(
+            "gpt-5.6-sol", self.p, cache_window="30m", priced_at=date(2026, 8, 1)
+        )
+        self.assertEqual(sol["cache_write"], self.p["openai"]["gpt-5.6-sol"]["cache_write_30m"])
+
 
 class TestCost(unittest.TestCase):
     def setUp(self):
@@ -248,6 +264,68 @@ class TestUnknownAndFallback(unittest.TestCase):
         p = pricing.load_pricing("/nonexistent/pricing.json")
         # 回退结构带 default
         self.assertIn("default", p)
+
+
+class TestLongContextThresholds(unittest.TestCase):
+    def test_includes_both_base_and_next_pricing_thresholds(self):
+        # 构造一个"涨价/降价顺带改了长上下文门槛"的模型：基础阈值 100000，
+        # next_pricing 改成 200000。旧写法 long_context_thresholds() 不接受
+        # priced_at、永远只按"今天"生效价取阈值，会漏掉另一个阈值对应的 SQL
+        # 列，导致按历史阈值本该判长上下文的行找不到列、静默按基础价算。
+        p = {
+            "default": {"input": 1.0, "output": 1.0, "cache_read": 0.1,
+                        "cache_write_5m": None, "cache_write_1h": None},
+            "anthropic": {
+                "model-a": {
+                    "input": 1.0, "output": 1.0, "cache_read": 0.1,
+                    "cache_write_5m": None, "cache_write_1h": None,
+                    "long_context": {"threshold": 100000, "input": 2.0, "output": 2.0},
+                    "next_pricing": {
+                        "starts_on": "2026-01-01",
+                        "input": 1.5, "output": 1.5,
+                        "long_context": {"threshold": 200000, "input": 3.0, "output": 3.0},
+                    },
+                },
+            },
+            "openai": {}, "deepseek": {}, "xai": {}, "local": {},
+        }
+        thresholds = pricing.long_context_thresholds(p)
+        self.assertIn(100000, thresholds)
+        self.assertIn(200000, thresholds)
+
+        # 历史日期（next_pricing 生效前）应判到旧阈值 100000
+        old = pricing.long_context_threshold_for_model("model-a", p, date(2025, 6, 1))
+        self.assertEqual(old, 100000)
+        # 生效后应判到新阈值 200000
+        new = pricing.long_context_threshold_for_model("model-a", p, date(2026, 6, 1))
+        self.assertEqual(new, 200000)
+
+    def test_no_next_pricing_returns_single_threshold(self):
+        p = {
+            "default": {"input": 1.0, "output": 1.0, "cache_read": 0.1,
+                        "cache_write_5m": None, "cache_write_1h": None},
+            "anthropic": {
+                "model-b": {
+                    "input": 1.0, "output": 1.0, "cache_read": 0.1,
+                    "cache_write_5m": None, "cache_write_1h": None,
+                    "long_context": {"threshold": 50000, "input": 2.0, "output": 2.0},
+                },
+            },
+            "openai": {}, "deepseek": {}, "xai": {}, "local": {},
+        }
+        self.assertEqual(pricing.long_context_thresholds(p), (50000,))
+
+    def test_real_pricing_json_thresholds_are_consistent(self):
+        # 冒烟测试：真实价表里跑一遍，不该抛异常，且当前生产价表里新旧阈值
+        # 恰好没变过，历史/今天判到的阈值应该一致。
+        p = pricing.load_pricing()
+        thresholds = pricing.long_context_thresholds(p)
+        self.assertTrue(all(isinstance(t, int) for t in thresholds))
+        for model in ("grok-4.6", "gpt-5.6-sol"):
+            today_th = pricing.long_context_threshold_for_model(model, p)
+            old_th = pricing.long_context_threshold_for_model(model, p, date(2025, 1, 1))
+            self.assertEqual(today_th, old_th)
+            self.assertIn(today_th, thresholds)
 
 
 if __name__ == "__main__":

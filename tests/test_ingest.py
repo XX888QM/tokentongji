@@ -409,6 +409,95 @@ class TestCodexIngest(unittest.TestCase):
         ).fetchone()
         self.assertEqual(tuple(row), ("observer", 75, 25, 20, 120))
 
+    def test_file_rebuild_resets_offset_and_carry_forward_baseline(self):
+        # docstring 明确写"inode 变 -> 文件重建或被截断，从头重读"，但没有任何
+        # 用例真的模拟过文件重建。用真实场景验证：文件被删掉重建成一个全新的
+        # 小会话后，新会话的用量必须被正常计入，不能因为旧 prev_total 基线
+        # （上百万）继续拿来做差分，把新会话的小 total 一减直接变成 0（被
+        # max(0, ...) 吞掉，系统性漏计）。
+        f = Path(self.tmp.name) / "codex-session.jsonl"
+        # cwd 故意撑得很长：保证旧 offset 明显大于重建后小文件的体积，不依赖
+        # "unlink 重建后 inode 一定变"这个平台相关行为，直接、确定地命中
+        # _should_read 的 size < offset 分支（同样是文档说的"文件重建/截断"）。
+        padded_cwd = "/" + ("x" * 4000)
+        _w(f, [
+            {"type": "turn_context", "payload": {"model": "gpt-5.5", "cwd": padded_cwd}},
+            _tc(1_000_000, 900_000, 100_000, 100_000),
+        ], mode="wb")
+        added1 = ingest._ingest_file(self.conn, f, "codex", "gpt-5.5")
+        self.assertEqual(added1, 1)
+
+        # 同路径原地重写成一个全新的小会话（截断变小，触发 _should_read 重置）
+        _w(f, [
+            {"type": "turn_context", "payload": {"model": "gpt-5.5", "cwd": "/c"}},
+            _tc(200, 150, 0, 50),
+        ], mode="wb")
+        added2 = ingest._ingest_file(self.conn, f, "codex", "gpt-5.5")
+        self.assertEqual(added2, 1)  # 新会话的用量不能被旧基线吞掉
+
+        rows = self.conn.execute(
+            "SELECT total_tokens FROM usage_events ORDER BY id"
+        ).fetchall()
+        self.assertEqual([r["total_tokens"] for r in rows], [1_000_000, 200])
+
+    def test_oversized_line_skipped_but_offset_advances_and_next_line_ingested(self):
+        # docstring 写"单行 >50MB 跳过"，但没有用例验证被跳过的巨行之后，offset
+        # 是否正确前进（不前进的话下一轮会在同一行卡死，永远读不到它之后的
+        # 内容）。用 patch 把阈值调小，不用真造 50MB 的行拖慢测试。
+        f = Path(self.tmp.name) / "huge-line.jsonl"
+        with open(f, "wb") as fh:
+            fh.write(b"x" * 2000 + b"\n")  # 超过下面 patch 的 1000 字节阈值
+        _w(f, [
+            {"type": "turn_context", "payload": {"model": "gpt-5.5", "cwd": "/c"}},
+            _tc(500, 300, 0, 200),
+        ])
+        with patch.object(ingest, "MAX_LINE_BYTES", 1000):
+            added = ingest._ingest_file(self.conn, f, "codex", "gpt-5.5")
+        self.assertEqual(added, 1)  # 巨行被跳过，正常行照常入库
+        row = self.conn.execute("SELECT total_tokens FROM usage_events").fetchone()
+        self.assertEqual(row["total_tokens"], 500)
+
+        # offset 必须已经前进过巨行：重新 ingest 不应再产出任何新行
+        with patch.object(ingest, "MAX_LINE_BYTES", 1000):
+            added2 = ingest._ingest_file(self.conn, f, "codex", "gpt-5.5")
+        self.assertEqual(added2, 0)
+
+
+class TestShouldRead(unittest.TestCase):
+    """_should_read() 的 inode/size/mtime 判断分支，纯函数直接测，不依赖真实
+    文件系统的 inode 分配行为（更快、更确定）。"""
+
+    def test_no_prior_state_reads_from_start(self):
+        self.assertEqual(
+            ingest._should_read(None, inode=5, size=100, mtime=1.0), (0, True)
+        )
+
+    def test_inode_change_resets_from_start(self):
+        # 文件被重建（同路径换了新文件）：inode 变了，必须从头读、重置 ctx
+        state = {"inode": 1, "offset": 500, "size": 500, "mtime": 10.0, "ctx": {}}
+        self.assertEqual(
+            ingest._should_read(state, inode=2, size=50, mtime=11.0), (0, True)
+        )
+
+    def test_size_smaller_than_offset_resets_from_start(self):
+        # 同 inode 但文件被截断变小（size < 已读 offset）：也必须从头重读
+        state = {"inode": 1, "offset": 500, "size": 500, "mtime": 10.0, "ctx": {}}
+        self.assertEqual(
+            ingest._should_read(state, inode=1, size=100, mtime=11.0), (0, True)
+        )
+
+    def test_no_change_returns_same_offset_without_reset(self):
+        state = {"inode": 1, "offset": 500, "size": 500, "mtime": 10.0, "ctx": {}}
+        self.assertEqual(
+            ingest._should_read(state, inode=1, size=500, mtime=10.0), (500, False)
+        )
+
+    def test_appended_data_continues_without_reset(self):
+        state = {"inode": 1, "offset": 500, "size": 500, "mtime": 10.0, "ctx": {}}
+        self.assertEqual(
+            ingest._should_read(state, inode=1, size=800, mtime=12.0), (500, False)
+        )
+
 
 class TestOpenclaWV3Ingest(unittest.TestCase):
     def setUp(self):

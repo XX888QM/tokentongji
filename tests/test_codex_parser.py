@@ -217,6 +217,36 @@ class TestCodexParser(unittest.TestCase):
         self.assertEqual(rec.request_prompt_tokens, 22738)
         self.assertEqual(rec.dedup_key, "claude-mem-codex:thread-1")
 
+    def test_compaction_input_field_drop_recovered_via_total_anchor(self):
+        # docstring 明确说明 compaction 时 input 子字段会回落，不能逐字段相减，
+        # 要锚定单调的 total_tokens 反推。这里构造一次真实的 compaction：原始
+        # input 字段从 800_000 掉到 300_000（上下文被压缩摘要），但 total 仍从
+        # 1_500_000 涨到 1_580_000（+80_000），output 从 500_000 涨到 530_000
+        # （+30_000）。若有人"简化"成直接 max(0, cur.input - prev.input)，
+        # 会把这轮新增的 input 算成 0，白白漏掉 50_000 token。
+        codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 0, self.state)
+        codex.process_record(_token_count(1_500_000, 1_000_000, 200_000, 500_000), "/f", 1, self.state)
+        rec = codex.process_record(_token_count(1_580_000, 700_000, 150_000, 530_000), "/f", 2, self.state)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.output_tokens, 30_000)          # 530_000 - 500_000
+        self.assertEqual(rec.total_tokens, 80_000)            # 锚定 total 的真实增量
+        # total-锚定法：d_input_total = d_total - d_output = 80_000 - 30_000 = 50_000
+        # cached 字段同样被 compaction 拉低(200_000 -> 150_000)，差值 floor 到 0
+        self.assertEqual(rec.cache_read_tokens, 0)
+        self.assertEqual(rec.input_tokens, 50_000)            # fresh_input，不是被漏计的 0
+        self.assertEqual(rec.input_tokens + rec.cache_read_tokens + rec.output_tokens, rec.total_tokens)
+
+    def test_claude_mem_cache_write_input_tokens_not_double_counted(self):
+        # docstring/注释都明确说 cache_write_input_tokens 原样留在来源 JSONL，
+        # 不重复计入 total/cache_creation，但现有测试全部固定传 0，没验证过
+        # 非零值真的不会被算进去。
+        obj = _claude_mem_usage("cache-write-nonzero")
+        obj["usage"]["cache_write_input_tokens"] = 5000
+        rec = codex.process_record(obj, "/usage/codex.jsonl", 0, self.state)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.cache_creation_tokens, 0)
+        self.assertEqual(rec.total_tokens, 22738 + 46)  # 不含 cache_write_input_tokens
+
     def test_claude_mem_usage_rejects_invalid_cache_or_reasoning_counts(self):
         bad_cache = _claude_mem_usage("bad-cache")
         bad_cache["usage"]["cached_input_tokens"] = 22739

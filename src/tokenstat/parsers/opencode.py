@@ -66,6 +66,12 @@ def fetch_records(
             (since_ts_ms,),
         )
         rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        # opencode 正在写事务持有锁时可能撞上；_open_ro 的 try/except 只挡
+        # connect() 阶段，真正的锁冲突常在第一次 execute() 才暴露（connect
+        # 本身不检查锁）。这里静默跳过这一轮，下次增量再试，不让本模块的
+        # 异常级联影响同一批次里排在它后面的其他来源。
+        return [], since_ts_ms
     finally:
         conn.close()
 

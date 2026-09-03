@@ -193,10 +193,14 @@ def insert_records(
     conn: sqlite3.Connection,
     records: Iterable[UsageRecord],
     on_conflict: str = "ignore",
+    commit: bool = True,
 ) -> int:
     """批量写入，按 dedup_key 去重幂等。返回实际新增或更新行数。
 
     on_conflict: 'ignore'（默认）| 'max'（Claude，取完整大快照）| 'replace'（Hermes 累计行）。
+    commit=False 时不自行提交，交由调用方和其他写操作合并成一个事务（比如
+    Claude fallback 升级场景：删旧临时行 + 写新 iteration 行必须原子生效，
+    分两次 commit 会在中途被杀时留下"旧行已删、新行未写"的短暂空窗）。
     """
     rows: Sequence[tuple] = [_row_tuple(r) for r in records]
     if not rows:
@@ -215,7 +219,8 @@ def insert_records(
         sql = f"INSERT OR IGNORE INTO usage_events ({_COLS}) VALUES ({_PLACEHOLDERS})"
     before = conn.total_changes
     conn.executemany(sql, rows)
-    conn.commit()
+    if commit:
+        conn.commit()
     # 带 WHERE 的 UPSERT 只在数据真实变化时计数，重复全表扫描返回 0。
     return conn.total_changes - before
 
@@ -259,8 +264,13 @@ def delete_openclaw_cross_format_duplicates(
     return conn.total_changes - before
 
 
-def delete_dedup_keys(conn: sqlite3.Connection, source: str, keys: Iterable[str]) -> int:
-    """删除来源内指定旧去重键，用于日志从临时格式升级为最终格式。"""
+def delete_dedup_keys(
+    conn: sqlite3.Connection, source: str, keys: Iterable[str], commit: bool = True
+) -> int:
+    """删除来源内指定旧去重键，用于日志从临时格式升级为最终格式。
+
+    commit=False 时不自行提交，见 insert_records 的同名参数说明。
+    """
     rows = [(source, key) for key in keys]
     if not rows:
         return 0
@@ -269,7 +279,8 @@ def delete_dedup_keys(conn: sqlite3.Connection, source: str, keys: Iterable[str]
         "DELETE FROM usage_events WHERE source = ? AND dedup_key = ?",
         rows,
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return conn.total_changes - before
 
 

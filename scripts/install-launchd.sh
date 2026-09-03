@@ -11,13 +11,18 @@ TEMPLATE="$APP_DIR/launchd/${LABEL}.plist"
 LOG_DIR="$HOME/Library/Logs/tokenstat"
 USER_ID="$(id -u)"
 SERVICE="gui/${USER_ID}/${LABEL}"
+FORCE_RESEED=false
+if [[ "${1:-}" == "--force-reseed" ]]; then
+  FORCE_RESEED=true
+fi
 
 mkdir -p "$HOME/Library/LaunchAgents" "$SUPPORT_DIR/src" "$SUPPORT_DIR/data" "$LOG_DIR"
 
-# 同步代码（不含测试/缓存）
+# 同步代码（不含测试/缓存/系统垃圾文件）
 rsync -a --delete \
   --exclude '__pycache__/' \
   --exclude '*.pyc' \
+  --exclude '.DS_Store' \
   "$APP_DIR/src/" "$SUPPORT_DIR/src/"
 
 cat > "$SUPPORT_DIR/start.sh" <<EOF
@@ -46,11 +51,29 @@ fi
 # 只在首装（运行副本还没有库）时把桌面库迁过去当种子。
 # 运行副本一旦建立，它才是唯一真值：桌面 data/ 那份是旧快照，
 # 无条件 cp 会把自启进程后来采集到的历史整段抹掉（不可逆）。
+#
+# "首装"判断不能只看运行副本有没有库文件——那分不清"从没装过"和"已经跑了
+# 很久、库因异常退出/误删/磁盘问题不见了但目录还在"这两种情况。用 $PLIST_DST
+# 存不存在做第二重信号：它只在本脚本成功跑到最后才会被写出，所以"$PLIST_DST
+# 已存在但库不见了"说明这不是首装，很可能是数据丢失，不能悄悄拿旧快照顶上
+# 掩盖过去，得先停下来让人确认。
 if [[ -f "$APP_DIR/data/tokenstat.db" && ! -f "$SUPPORT_DIR/data/tokenstat.db" ]]; then
+  if [[ -f "$PLIST_DST" && "$FORCE_RESEED" != true ]]; then
+    echo "警告：LaunchAgent 之前已装过（$PLIST_DST 存在），但运行库 $SUPPORT_DIR/data/tokenstat.db 不见了。" >&2
+    echo "这不是首装，运行副本的库大概率是被误删/异常丢失，不是从没装过。" >&2
+    echo "为避免用仓库里可能是几个月前的旧快照悄悄覆盖、掩盖数据丢失，这里停止执行。" >&2
+    echo "重建前建议先看看 $SUPPORT_DIR/data/backups/ 里有没有更新的备份可以手动恢复。" >&2
+    echo "确认要用仓库 data/tokenstat.db 当种子重建，请带上 --force-reseed 重跑本脚本。" >&2
+    exit 1
+  fi
   sqlite3 "$APP_DIR/data/tokenstat.db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 || true
   cp "$APP_DIR/data/tokenstat.db" "$SUPPORT_DIR/data/tokenstat.db"
   rm -f "$SUPPORT_DIR/data/tokenstat.db-wal" "$SUPPORT_DIR/data/tokenstat.db-shm"
-  echo "首装：已用仓库 data/tokenstat.db 作为运行副本的初始库。"
+  if [[ -f "$PLIST_DST" ]]; then
+    echo "已用 --force-reseed 确认：用仓库 data/tokenstat.db 重建了运行副本的库。"
+  else
+    echo "首装：已用仓库 data/tokenstat.db 作为运行副本的初始库。"
+  fi
 elif [[ -f "$SUPPORT_DIR/data/tokenstat.db" ]]; then
   echo "运行副本已有库，保留不覆盖：$SUPPORT_DIR/data/tokenstat.db"
 fi
