@@ -421,6 +421,7 @@ class TestIngestToApi(unittest.TestCase):
             CLAUDE_MEM_CODEX_USAGE_DIR=self._usage_dir,
             OPENCODE_DB_PATH=root / "opencode.db",
             OPENCLAW_SESSION_DIR=root / "openclaw",
+            OPENCLAW_AGENTS_DIR=root / "openclaw-agents",
             HERMES_STATE_DB=root / "hermes.db",
             GROK_LOG_PATH=root / "grok.jsonl",
             CLAUDE_MEM_GROK_LOG_PATH=self._grok_observer_log,

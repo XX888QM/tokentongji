@@ -329,6 +329,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(data)
 
     def _api_audit(self):
+        from . import ingest as ingest_mod
+
         data = _load_audit()
         data["generated_at"] = _now_local_str()
         data["db"] = _db_status()
@@ -339,7 +341,10 @@ class Handler(BaseHTTPRequestHandler):
                 _path_status(config.CLAUDE_MEM_CODEX_USAGE_DIR),
             ],
             "opencode": _path_status(config.OPENCODE_DB_PATH),
-            "openclaw": _path_status(config.OPENCLAW_SESSION_DIR),
+            "openclaw": [
+                _path_status(config.OPENCLAW_SESSION_DIR),
+                *(_path_status(path) for path in ingest_mod.openclaw_sqlite_files()),
+            ],
             "hermes": _path_status(config.HERMES_STATE_DB),
             "grok": _path_status(config.GROK_LOG_PATH),
             "claude_mem_grok": _path_status(config.CLAUDE_MEM_GROK_LOG_PATH),
@@ -348,7 +353,7 @@ class Handler(BaseHTTPRequestHandler):
             "claude": data["data_sources"]["claude"]["exists"],
             "codex": any(item["exists"] for item in data["data_sources"]["codex"]),
             "opencode": data["data_sources"]["opencode"]["exists"],
-            "openclaw": data["data_sources"]["openclaw"]["exists"],
+            "openclaw": any(item["exists"] for item in data["data_sources"]["openclaw"]),
             "hermes": data["data_sources"]["hermes"]["exists"],
             "grok": (
                 data["data_sources"]["grok"]["exists"]

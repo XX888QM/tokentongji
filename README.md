@@ -12,7 +12,7 @@
 | Claude | `~/.claude/projects/**/*.jsonl` | assistant 的 `message.usage`，按 `message.id` 去重；fallback 的 `usage.iterations` 按真实模型分别统计 |
 | Codex | `~/.codex/sessions` + `archived_sessions`；claude-mem 额外读取 `~/.claude-mem/usage/codex-usage-*.jsonl` | 普通会话对 `token_count` 的累积 `total_token_usage` 做相邻差分（防 2x 高估）；claude-mem 的 `codex exec --ephemeral` 用单次 `turn.completed.usage` 精确入账，标记为后台 observer，并在页面拆成 `Codex（直接）` 与 `claude-mem（Codex 额度）` |
 | OpenCode | `~/.local/share/opencode/opencode.db` | 直读 SQLite，按消息时间戳增量同步；reasoning token 计入 output |
-| OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | 兼容 trajectory 与 v3 两种格式；trajectory 行是 v3 多行的合计，同一 session 两格式并存时整段删 trajectory、保留 v3 明细 |
+| OpenClaw | `~/.openclaw/agents/*/agent/openclaw-agent.sqlite`；旧 jsonl 若还在也读 | 2026-09 起会话在 sqlite 的 v3 `transcript_events`；与旧 jsonl 共用 `openclaw-v3:{id}` 去重。trajectory 合计行在有 v3 时整段删除 |
 | Hermes | `~/.hermes/state.db` | 直读累计 session 行并同步覆盖；reasoning 是 output 子集，不重复相加 |
 | Grok | `~/.grok/logs/unified.jsonl` | Grok CLI 与 claude-mem API 转录的 `shell.turn.inference_done` 增量 token；model/cwd 优先读事件内容，否则按 sid carry-forward |
 
@@ -90,6 +90,7 @@ bash scripts/uninstall-launchd.sh  # 只卸自启，不删库
 | `TOKENSTAT_DATA_DIR` | 已装自启则为 `~/Library/Application Support/tokenstat/data`，否则 `./data` | SQLite 与备份目录 |
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 统一日志路径 |
 | `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex 单次真实用量 JSONL 目录 |
+| `TOKENSTAT_OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | OpenClaw 各 agent 目录，用来找 `*/agent/openclaw-agent.sqlite` |
 
 费用单价见 `src/tokenstat/pricing.json`，可自行调整（美元/百万 token）。本地/自托管模型放 `local` 分区按零费率处理。`codex-auto-review` 按 OpenAI Codex 专项 `gpt-5.3-codex` 公开价格估算；`gpt-5-codex` 使用其自身公开价格。
 **注意：订阅制（Claude Max / Codex / Grok 套餐）下 token 不直接对应扣费，费用仅供参考。**

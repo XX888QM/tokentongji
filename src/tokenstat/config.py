@@ -38,6 +38,13 @@ CLAUDE_MEM_CODEX_USAGE_DIR = Path(
 )
 OPENCODE_DB_PATH = HOME / ".local" / "share" / "opencode" / "opencode.db"
 OPENCLAW_SESSION_DIR = HOME / ".openclaw" / "agents" / "main" / "sessions"
+# OpenClaw 2026-09 起把 session 迁进各 agent 的 sqlite；jsonl 目录可能清空。
+OPENCLAW_AGENTS_DIR = Path(
+    os.environ.get(
+        "TOKENSTAT_OPENCLAW_AGENTS_DIR",
+        str(HOME / ".openclaw" / "agents"),
+    )
+)
 HERMES_STATE_DB = HOME / ".hermes" / "state.db"
 # Grok CLI 统一日志（shell.turn.inference_done 带真实 token）
 GROK_LOG_PATH = Path(os.environ.get("TOKENSTAT_GROK_LOG", str(HOME / ".grok" / "logs" / "unified.jsonl")))

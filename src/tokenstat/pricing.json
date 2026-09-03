@@ -7,7 +7,7 @@
     "source_xai": "https://docs.x.ai/developers/pricing",
     "fetched_date": "2026-09-02",
     "verified_date": "2026-09-02",
-    "note": "本表按官方公开 API 单价折算；订阅制（Claude Max / Codex / Grok 套餐）下 token 不直接对应扣费，仅供参考。Grok 4.5 cache_read $0.30、Grok 4.6 cache_read $0.50，均按 xAI 官方价格表登记。grok-latest 于 2026-07-20 核验为 grok-4.3。Claude Sonnet 5 原定 2026-09-01 涨价已被官方取消，$2/$10 即标准价。GPT-5.6 Sol 于 2026-08-21 降价（$5/$30 → $4/$20），历史行按当日价分段计。Claude Fable 5.1 / Mythos 5.1 于 2026-09-02 核验：input/output/cache_write 同 5 代不变，cache_read 降为 $0.25（0.025x base input，5 代是 0.1x 的 $1）。长上下文价仅在能取得单次请求完整 prompt token 数的来源启用。"
+    "note": "本表按官方公开 API 单价折算；订阅制（Claude Max / Codex / Grok 套餐）下 token 不直接对应扣费，仅供参考。Grok 4.5 cache_read $0.30、Grok 4.6 cache_read $0.50，均按 xAI 官方价格表登记。grok-latest 于 2026-07-20 核验为 grok-4.3。Claude Sonnet 5 原定 2026-09-01 涨价已被官方取消，$2/$10 即标准价。GPT-5.6 Sol 于 2026-08-21 降价（$5/$30 → $4/$20），历史行按当日价分段计。gpt-daybreak-blue / gpt-daybreak-blue-latest 官方别名指向 gpt-5.6-sol，单价与 Sol 相同（含 2026-08-21 降价）。Claude Fable 5.1 / Mythos 5.1 于 2026-09-02 核验：input/output/cache_write 同 5 代不变，cache_read 降为 $0.25（0.025x base input，5 代是 0.1x 的 $1）。长上下文价仅在能取得单次请求完整 prompt token 数的来源启用。"
   },
   "default": { "input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write_5m": 6.25, "cache_write_1h": 10.0 },
   "anthropic": {
@@ -77,6 +77,15 @@
   },
   "openai": {
     "gpt-5.6-sol": {
+      "input": 5.0, "output": 30.0, "cache_read": 0.50, "cache_write_5m": null, "cache_write_1h": null, "cache_write_30m": 6.25,
+      "long_context": { "threshold": 272000, "input": 10.0, "output": 45.0, "cache_read": 1.0, "cache_write_30m": 12.50 },
+      "next_pricing": {
+        "starts_on": "2026-08-21",
+        "input": 4.0, "output": 20.0, "cache_read": 0.40, "cache_write_30m": 5.0,
+        "long_context": { "threshold": 272000, "input": 8.0, "output": 30.0, "cache_read": 0.80, "cache_write_30m": 10.0 }
+      }
+    },
+    "gpt-daybreak-blue": {
       "input": 5.0, "output": 30.0, "cache_read": 0.50, "cache_write_5m": null, "cache_write_1h": null, "cache_write_30m": 6.25,
       "long_context": { "threshold": 272000, "input": 10.0, "output": 45.0, "cache_read": 1.0, "cache_write_30m": 12.50 },
       "next_pricing": {

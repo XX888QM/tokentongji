@@ -55,6 +55,12 @@ class TestTrajectoryFormat(unittest.TestCase):
         r = openclaw.parse_record(self._event(sessionKey=""), "/f", 0)
         self.assertEqual(r.project, "openclaw")
 
+    def test_sessionkey_new_format(self):
+        r = openclaw.parse_record(
+            self._event(sessionKey="openclaw-weixin:direct/group"), "/f", 0
+        )
+        self.assertEqual(r.project, "openclaw-weixin")
+
 
 class TestV3Format(unittest.TestCase):
     def _session(self, sid="sid-1", cwd="/proj"):
@@ -95,6 +101,135 @@ class TestV3Format(unittest.TestCase):
     def test_zero_total_skipped(self):
         ctx = {}
         self.assertIsNone(openclaw.parse_v3_record(self._msg(total=0), "/f", 0, ctx))
+
+
+class TestSqliteFetch(unittest.TestCase):
+    def setUp(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tmp.name) / "openclaw-agent.sqlite"
+        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn.execute(
+            "CREATE TABLE transcript_events (session_id TEXT, seq INTEGER, event_json TEXT, created_at INTEGER, PRIMARY KEY(session_id, seq))"
+        )
+        self.conn.execute(
+            "CREATE TABLE session_windows (session_id TEXT, session_key TEXT)"
+        )
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _add(self, sid, seq, obj, key="openclaw-weixin:direct"):
+        import json
+
+        self.conn.execute(
+            "INSERT INTO transcript_events VALUES (?,?,?,?)",
+            (sid, seq, json.dumps(obj), 1_700_000_000_000 + seq),
+        )
+        self.conn.execute(
+            "INSERT OR IGNORE INTO session_windows VALUES (?,?)",
+            (sid, key),
+        )
+        self.conn.commit()
+
+    def test_fetches_assistant_usage_and_skips_zero(self):
+        sid = "sid-sql"
+        self._add(sid, 0, {"type": "session", "id": sid, "cwd": "/workspace"})
+        self._add(
+            sid,
+            1,
+            {
+                "type": "message",
+                "id": "m-keep",
+                "message": {
+                    "role": "assistant",
+                    "model": "grok-4.6",
+                    "usage": {
+                        "input": 10,
+                        "output": 5,
+                        "cacheRead": 2,
+                        "cacheWrite": 0,
+                        "totalTokens": 17,
+                    },
+                    "timestamp": 1_700_000_001_000,
+                },
+            },
+        )
+        self._add(
+            sid,
+            2,
+            {
+                "type": "message",
+                "id": "m-zero",
+                "message": {
+                    "role": "assistant",
+                    "model": "grok-4.6",
+                    "usage": {"input": 0, "output": 0, "totalTokens": 0},
+                    "timestamp": 1_700_000_002_000,
+                },
+            },
+        )
+        recs = openclaw.fetch_records(self.db_path)
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0].dedup_key, "openclaw-v3:m-keep")
+        self.assertEqual(recs[0].project, "openclaw-weixin")
+        self.assertEqual(recs[0].session_id, sid)
+        self.assertEqual(recs[0].total_tokens, 17)
+
+    def test_copied_window_same_message_id_dedups(self):
+        msg = {
+            "type": "message",
+            "id": "copied",
+            "message": {
+                "role": "assistant",
+                "model": "grok-4.6",
+                "usage": {"input": 1, "output": 1, "totalTokens": 2},
+                "timestamp": 1_700_000_003_000,
+            },
+        }
+        self._add("win-a", 0, msg, "main")
+        self._add("win-b", 0, msg, "main")
+        recs = openclaw.fetch_records(self.db_path)
+        self.assertEqual(len(recs), 2)
+        self.assertEqual({r.dedup_key for r in recs}, {"openclaw-v3:copied"})
+
+    def test_missing_db_returns_empty(self):
+        from pathlib import Path
+
+        self.assertEqual(openclaw.fetch_records(Path(self.tmp.name) / "nope.sqlite"), [])
+
+    def test_non_object_event_json_skipped(self):
+        sid = "sid-bad"
+        self._add(sid, 0, {"type": "session", "id": sid, "cwd": "/workspace"})
+        self.conn.execute(
+            "INSERT INTO transcript_events VALUES (?,?,?,?)",
+            (sid, 3, "null", 3),
+        )
+        self.conn.execute(
+            "INSERT INTO transcript_events VALUES (?,?,?,?)",
+            (sid, 4, "[]", 4),
+        )
+        self._add(
+            sid,
+            5,
+            {
+                "type": "message",
+                "id": "after-junk",
+                "message": {
+                    "role": "assistant",
+                    "model": "grok-4.6",
+                    "usage": {"input": 3, "output": 1, "totalTokens": 4},
+                    "timestamp": 1_700_000_005_000,
+                },
+            },
+        )
+        recs = openclaw.fetch_records(self.db_path)
+        keys = {r.dedup_key for r in recs}
+        self.assertIn("openclaw-v3:after-junk", keys)
 
 
 if __name__ == "__main__":

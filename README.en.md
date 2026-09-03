@@ -11,7 +11,7 @@ A local desktop web dashboard that tracks token usage from **Claude Code**, **Co
 | Claude | `~/.claude/projects/**/*.jsonl` | Reads assistant `message.usage`, deduplicates by `message.id`, and separates fallback `usage.iterations` by their real model |
 | Codex | `~/.codex/sessions` + `archived_sessions`; claude-mem also reads `~/.claude-mem/usage/codex-usage-*.jsonl` | Computes adjacent deltas from cumulative `total_token_usage`; ephemeral `codex exec` calls use the exact one-shot `turn.completed.usage` value and are shown separately as `claude-mem (Codex quota)` |
 | OpenCode | `~/.local/share/opencode/opencode.db` | Reads SQLite directly and syncs incrementally by message timestamp; reasoning tokens count as output |
-| OpenClaw | `~/.openclaw/agents/main/sessions/*.jsonl` | Supports trajectory and v3 formats and removes identical calls duplicated across both formats |
+| OpenClaw | `~/.openclaw/agents/*/agent/openclaw-agent.sqlite`; leftover jsonl if present | Sessions moved to sqlite v3 `transcript_events` in 2026-09; same `openclaw-v3:{id}` keys as old jsonl |
 | Hermes | `~/.hermes/state.db` | Reads cumulative session rows and synchronizes replacements; reasoning is a subset of output and is not added twice |
 | Grok | `~/.grok/logs/unified.jsonl` | Reads incremental token usage from `shell.turn.inference_done` events produced by Grok CLI or claude-mem API transcripts; inline model/cwd values take priority, otherwise values carry forward by sid |
 

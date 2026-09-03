@@ -583,6 +583,106 @@ class TestOpenclaWV3Ingest(unittest.TestCase):
         self.assertEqual(self._rows()["c"], 1)
 
 
+class TestOpenclawSqliteIngest(unittest.TestCase):
+    def setUp(self):
+        import sqlite3
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        agent_dir = self.root / "main" / "agent"
+        agent_dir.mkdir(parents=True)
+        self.db_path = agent_dir / "openclaw-agent.sqlite"
+        src = sqlite3.connect(str(self.db_path))
+        src.execute(
+            "CREATE TABLE transcript_events (session_id TEXT, seq INTEGER, event_json TEXT, created_at INTEGER, PRIMARY KEY(session_id, seq))"
+        )
+        src.execute("CREATE TABLE session_windows (session_id TEXT, session_key TEXT)")
+        src.execute(
+            "INSERT INTO session_windows VALUES (?,?)",
+            ("sid-1", "openclaw-weixin:direct"),
+        )
+        src.execute(
+            "INSERT INTO transcript_events VALUES (?,?,?,?)",
+            (
+                "sid-1",
+                0,
+                json.dumps({"type": "session", "id": "sid-1", "cwd": "/workspace"}),
+                1,
+            ),
+        )
+        src.execute(
+            "INSERT INTO transcript_events VALUES (?,?,?,?)",
+            (
+                "sid-1",
+                1,
+                json.dumps({
+                    "type": "message",
+                    "id": "sql-new",
+                    "message": {
+                        "role": "assistant",
+                        "model": "grok-4.6",
+                        "usage": {
+                            "input": 100,
+                            "output": 20,
+                            "cacheRead": 5,
+                            "cacheWrite": 0,
+                            "totalTokens": 125,
+                        },
+                        "timestamp": 1_777_000_000_000,
+                    },
+                }),
+                2,
+            ),
+        )
+        src.commit()
+        src.close()
+        self.conn = db.get_conn(":memory:")
+        db.init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_sqlite_ingest_and_ignore_existing_v3_key(self):
+        db.insert_records(
+            self.conn,
+            [
+                UsageRecord(
+                    ts=100,
+                    source="openclaw",
+                    model="grok-4.6",
+                    project="old",
+                    input_tokens=100,
+                    output_tokens=20,
+                    cache_read_tokens=5,
+                    total_tokens=125,
+                    session_id="sid-1",
+                    source_file="/old.jsonl",
+                    pos=1,
+                    dedup_key="openclaw-v3:sql-new",
+                )
+            ],
+        )
+        with patch("tokenstat.config.OPENCLAW_AGENTS_DIR", self.root):
+            added = ingest._ingest_openclaw_sqlite(self.conn)
+        self.assertEqual(added, 0)
+        n = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM usage_events WHERE source='openclaw'"
+        ).fetchone()["c"]
+        self.assertEqual(n, 1)
+
+    def test_sqlite_ingest_inserts_new_rows(self):
+        with patch("tokenstat.config.OPENCLAW_AGENTS_DIR", self.root):
+            added = ingest._ingest_openclaw_sqlite(self.conn)
+        self.assertEqual(added, 1)
+        row = self.conn.execute(
+            "SELECT project, total_tokens, model FROM usage_events"
+        ).fetchone()
+        self.assertEqual(row["project"], "openclaw-weixin")
+        self.assertEqual(row["total_tokens"], 125)
+        self.assertEqual(row["model"], "grok-4.6")
+
+
 class TestHermesIngest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

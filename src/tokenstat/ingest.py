@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from dataclasses import replace
 from pathlib import Path
 from typing import Iterator
@@ -59,6 +60,15 @@ def openclaw_v3_files() -> Iterator[Path]:
         for p in root.glob("*.jsonl"):
             if "trajectory" not in p.name:
                 yield p
+
+
+def openclaw_sqlite_files() -> Iterator[Path]:
+    root = config.OPENCLAW_AGENTS_DIR
+    if not root.is_dir():
+        return
+    for path in sorted(root.glob("*/agent/openclaw-agent.sqlite")):
+        if path.is_file():
+            yield path
 
 
 def _should_read(state: dict | None, inode: int, size: int, mtime: float):
@@ -318,6 +328,19 @@ def _ingest_openclaw_v3_file(conn, path: Path) -> int:
     return added
 
 
+def _ingest_openclaw_sqlite(conn) -> int:
+    """全表重扫各 agent 的 openclaw-agent.sqlite；dedup_key 与 v3 jsonl 相同。"""
+    added = 0
+    for path in openclaw_sqlite_files():
+        try:
+            records = openclaw_parser.fetch_records(path)
+            if records:
+                added += db.insert_records(conn, records, on_conflict="ignore")
+        except (OSError, sqlite3.Error, TypeError, ValueError, AttributeError, UnicodeDecodeError):
+            continue
+    return added
+
+
 def run_once() -> dict:
     """扫描全部数据源，增量入库一次。返回统计 dict。"""
     config.ensure_data_dir()
@@ -338,14 +361,20 @@ def run_once() -> dict:
             files_scanned += 1
         records_added += _ingest_opencode(conn)
         records_added += _ingest_hermes(conn)
-        for path in openclaw_files():
-            records_added += _ingest_file(conn, path, SOURCE_OPENCLAW, "")
-            files_scanned += 1
+        sqlite_paths = list(openclaw_sqlite_files())
+        # sqlite 已是 v3 权威明细时，trajectory jsonl 合计会和 sqlite 双计；
+        # 配对删除只认磁盘上的 *.jsonl 路径，盖不住 sqlite。有 sqlite 就不再吃 trajectory。
+        if not sqlite_paths:
+            for path in openclaw_files():
+                records_added += _ingest_file(conn, path, SOURCE_OPENCLAW, "")
+                files_scanned += 1
         v3_paths = list(openclaw_v3_files())
         for path in v3_paths:
             records_added += _ingest_openclaw_v3_file(conn, path)
             files_scanned += 1
         db.delete_openclaw_cross_format_duplicates(conn, (str(p) for p in v3_paths))
+        records_added += _ingest_openclaw_sqlite(conn)
+        files_scanned += len(sqlite_paths)
         for path, observer in (
             (config.GROK_LOG_PATH, False),
             (config.CLAUDE_MEM_GROK_LOG_PATH, True),

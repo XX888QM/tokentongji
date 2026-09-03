@@ -84,6 +84,25 @@ class TestNormalization(unittest.TestCase):
                 (long_rates["input"], long_rates["cache_read"], long_rates["cache_write"], long_rates["output"]), long
             )
 
+    def test_daybreak_blue_uses_sol_rates(self):
+        # OpenAI: gpt-daybreak-blue-latest 是 gpt-5.6-sol 别名，同价，不能掉 default
+        for model in ("gpt-daybreak-blue", "gpt-daybreak-blue-latest"):
+            self.assertFalse(pricing.is_unknown_model(model, self.p))
+            before = pricing.rates_for_model(
+                model, self.p, cache_window="30m", priced_at=date(2026, 8, 20)
+            )
+            after = pricing.rates_for_model(
+                model, self.p, cache_window="30m", priced_at=date(2026, 8, 21)
+            )
+            self.assertEqual(
+                (before["input"], before["cache_read"], before["cache_write"], before["output"]),
+                (5.0, 0.50, 6.25, 30.0),
+            )
+            self.assertEqual(
+                (after["input"], after["cache_read"], after["cache_write"], after["output"]),
+                (4.0, 0.40, 5.0, 20.0),
+            )
+
     def test_gpt56_sol_price_cut_2026_08_21(self):
         # OpenAI 于 2026-08-21 下调 Sol：$5/$30 → $4/$20，历史行必须仍按旧价
         before = pricing.rates_for_model(
