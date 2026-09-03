@@ -222,7 +222,9 @@ class TestDbUpserts(unittest.TestCase):
                         cache_read_tokens=50, total_tokens=75,
                         source_file="/tmp/s.trajectory.jsonl", dedup_key="traj-sum"),
         ])
-        self.assertEqual(db.delete_openclaw_cross_format_duplicates(self.conn), 1)
+        self.assertEqual(
+            db.delete_openclaw_cross_format_duplicates(self.conn, ["/tmp/s.jsonl"]), 1
+        )
         keys = [r[0] for r in self.conn.execute(
             "SELECT dedup_key FROM usage_events ORDER BY dedup_key"
         )]
@@ -235,10 +237,43 @@ class TestDbUpserts(unittest.TestCase):
                         input_tokens=10, output_tokens=5, total_tokens=15,
                         source_file="/tmp/lonely.trajectory.jsonl", dedup_key="solo"),
         ])
-        self.assertEqual(db.delete_openclaw_cross_format_duplicates(self.conn), 0)
+        self.assertEqual(db.delete_openclaw_cross_format_duplicates(self.conn, []), 0)
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0], 1
         )
+
+    def test_openclaw_trajectory_survives_after_v3_reset(self):
+        # v3 文件早先产生过历史行，之后被 openclaw 侧 .jsonl.reset.* 重命名/停更
+        # （不再出现在本轮 glob 到的 active_v3_paths 里）。此后 trajectory 侧新写
+        # 入的行必须保留，不能因为"历史上配对过"就被永远继续删下去。
+        common = dict(source="openclaw", model="gpt-5.4", project="/p", session_id="s")
+        db.insert_records(self.conn, [
+            UsageRecord(**common, ts=100, input_tokens=10, output_tokens=5,
+                        total_tokens=15, source_file="/tmp/reset.jsonl",
+                        dedup_key="v3-old"),
+        ])
+        # 第一轮：v3 文件还在，配对生效，trajectory 行被删（沿用既有行为）
+        db.insert_records(self.conn, [
+            UsageRecord(**common, ts=110, input_tokens=8, output_tokens=4,
+                        total_tokens=12, source_file="/tmp/reset.trajectory.jsonl",
+                        dedup_key="traj-1"),
+        ])
+        self.assertEqual(
+            db.delete_openclaw_cross_format_duplicates(self.conn, ["/tmp/reset.jsonl"]), 1
+        )
+
+        # 第二轮：v3 文件已被 reset（不再出现在 active_v3_paths），trajectory 侧
+        # 又写入了新一轮真实用量——这条必须保留，不能被"历史上配对过"误杀。
+        db.insert_records(self.conn, [
+            UsageRecord(**common, ts=200, input_tokens=100, output_tokens=99,
+                        total_tokens=1998, source_file="/tmp/reset.trajectory.jsonl",
+                        dedup_key="traj-2"),
+        ])
+        self.assertEqual(db.delete_openclaw_cross_format_duplicates(self.conn, []), 0)
+        keys = [r[0] for r in self.conn.execute(
+            "SELECT dedup_key FROM usage_events ORDER BY dedup_key"
+        )]
+        self.assertEqual(keys, ["traj-2", "v3-old"])
 
 
 class TestRequestPromptMigration(unittest.TestCase):

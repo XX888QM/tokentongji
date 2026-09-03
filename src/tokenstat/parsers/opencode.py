@@ -8,6 +8,13 @@ opencode 将消息直接存到 SQLite message 表，每条 assistant 消息含�
 用 >= 而非 > 是为了不漏掉与游标同毫秒、但写入晚于上轮扫描的消息；
 边界行会被重复读到，但 dedup_key(opencode:{id}) 保证 on_conflict='ignore' 挡掉重复，
 不会重复计数。无需文件 offset 机制。
+
+recon 实测：opencode 写消息行是先插入 tokens 全 0 的占位行，流式结束后再原地
+UPDATE 成真实 token 值，time_created 全程不变。若同一批读到的行里，占位行(ts
+较小)之后跟着一条已完成的行(ts 较大)，水位线绝不能被后者推过前者——否则前者
+之后被原地补上真实值时，下轮 `time_created >= 水位线` 永远查不到它，用量静默
+永久丢失。做法：一旦本批遇到解析失败/仍是占位的行，其后所有行都不再推进水位
+线，保证下一轮重新从这里往后扫。
 """
 
 from __future__ import annotations
@@ -64,14 +71,23 @@ def fetch_records(
 
     records: List[UsageRecord] = []
     max_ts_ms = since_ts_ms
+    watermark_blocked = False
 
     for row in rows:
         rec = _parse_row(row, db_path)
         if rec is not None:
             records.append(rec)
-            ts_ms = int(row["time_created"])
-            if ts_ms > max_ts_ms:
-                max_ts_ms = ts_ms
+            if not watermark_blocked:
+                ts_ms = int(row["time_created"])
+                if ts_ms > max_ts_ms:
+                    max_ts_ms = ts_ms
+        else:
+            # ponytail: 跳过的行可能是仍在流式写入、tokens 全 0 的占位消息，之后
+            # 会被原地 UPDATE 补上真实值但 time_created 不变。一旦本批遇到这种行，
+            # 后面的行一律不再推进水位线，保证下轮重新扫到它；代价是水位线暂停期间
+            # 会重复重扫已入库的行（dedup_key 幂等，白扫不白算），真出现"消息永久
+            # 卡死不补全"再考虑按 session 分别追踪。
+            watermark_blocked = True
 
     return records, max_ts_ms
 

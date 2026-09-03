@@ -335,10 +335,11 @@ def run_once() -> dict:
         for path in openclaw_files():
             records_added += _ingest_file(conn, path, SOURCE_OPENCLAW, "")
             files_scanned += 1
-        for path in openclaw_v3_files():
+        v3_paths = list(openclaw_v3_files())
+        for path in v3_paths:
             records_added += _ingest_openclaw_v3_file(conn, path)
             files_scanned += 1
-        db.delete_openclaw_cross_format_duplicates(conn)
+        db.delete_openclaw_cross_format_duplicates(conn, (str(p) for p in v3_paths))
         for path, observer in (
             (config.GROK_LOG_PATH, False),
             (config.CLAUDE_MEM_GROK_LOG_PATH, True),

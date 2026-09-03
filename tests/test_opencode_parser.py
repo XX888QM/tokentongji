@@ -81,6 +81,37 @@ class TestOpencodeParser(unittest.TestCase):
         recs2, _ = opencode.fetch_records(self.db, since_ts_ms=2000)
         self.assertEqual([r.dedup_key for r in recs2], ["opencode:b"])
 
+    def test_watermark_frozen_at_first_unparsed_row_so_late_update_is_not_missed(self):
+        # 真实 opencode 写入模式：占位行(tokens 全 0, ts 较小)先出现，之后一条已
+        # 完成的行(ts 较大)紧跟其后。水位线绝不能被后者推过前者——否则占位行
+        # 之后被原地 UPDATE 成真实 token 值时(time_created 不变)，会被永久漏读。
+        _make_db(self.db, [
+            ("pending", "s1", 1000, _assistant(inp=0, out=0, reasoning=0, cread=0, cwrite=0)),
+            ("done", "s1", 2000, _assistant(inp=20, out=10)),
+        ])
+        recs, max_ts = opencode.fetch_records(self.db, since_ts_ms=0)
+        self.assertEqual([r.dedup_key for r in recs], ["opencode:done"])
+        # 水位线必须冻结在 pending 之前，不能被 done 的 ts=2000 推过去
+        self.assertEqual(max_ts, 0)
+
+        # opencode 把 pending 原地 UPDATE 成真实 token 值，time_created 不变
+        conn = sqlite3.connect(str(self.db))
+        conn.execute(
+            "UPDATE message SET data = ? WHERE id = ?",
+            (json.dumps(_assistant(inp=30, out=15)), "pending"),
+        )
+        conn.commit()
+        conn.close()
+
+        # 下一轮从冻结的水位线重新扫：pending 现在能读到真实值；done 被重复读到，
+        # 交由 DB 层 dedup_key 去重，不会重复计数
+        recs2, max_ts2 = opencode.fetch_records(self.db, since_ts_ms=max_ts)
+        keys = sorted(r.dedup_key for r in recs2)
+        self.assertEqual(keys, ["opencode:done", "opencode:pending"])
+        pending_rec = next(r for r in recs2 if r.dedup_key == "opencode:pending")
+        self.assertEqual(pending_rec.input_tokens, 30)
+        self.assertEqual(max_ts2, 2000)
+
     def test_explicit_total_respected(self):
         _make_db(self.db, [
             ("m1", "s1", 1000, _assistant(inp=100, out=50, total=999)),
