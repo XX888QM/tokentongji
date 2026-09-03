@@ -196,6 +196,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .stat-card .s-label { margin-bottom: 12px; color: var(--dim); font: 600 14px/1 var(--number-font); letter-spacing: .12em; text-transform: uppercase; }
 .stat-card .s-value { color: var(--paper); font: 700 34px/1.05 var(--number-font); letter-spacing: -.04em; }
 .stat-card .s-cost { margin-top: 8px; color: var(--gold); font: 500 15px/1 var(--number-font); }
+.stat-card .s-projection { margin-top: 4px; color: var(--dim); font-size: 13px; }
 .stat-card .s-split { display: flex; flex-wrap: wrap; gap: 7px 14px; margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--line-soft); font-size: 14px; }
 
 /* Panels */
@@ -255,6 +256,12 @@ tfoot tr.tfoot-total td { border-top: 1px solid rgba(230,199,122,.35); border-bo
 .pager-btn:disabled { opacity: .3; cursor: default; }
 .mini-btn:disabled { opacity: .3; cursor: wait; }
 .pager-info { color: var(--dim); font: 500 14px/1 var(--number-font); }
+
+.source-filter-chip { display: flex; align-items: center; gap: 8px; margin: -8px 0 14px; color: var(--muted); font-size: 14px; }
+.source-filter-chip button { padding: 2px 8px; border: 1px solid var(--line); border-radius: 2px; background: transparent; color: var(--muted); cursor: pointer; font: 600 12px/1 var(--number-font); }
+.source-filter-chip button:hover { color: var(--gold); border-color: rgba(230,199,122,.4); }
+.badge[data-source] { cursor: pointer; }
+.observatory-source-row[data-source] { cursor: pointer; }
 
 /* Audit and insights */
 .audit-grid { display: grid; grid-template-columns: 1fr 1fr 1.15fr; gap: 28px; }
@@ -441,6 +448,9 @@ body { background: var(--hud-void); color: var(--hud-text); }
 .readout-unit { color: var(--hud-cyan); font-size: 10px; }
 .readout-cost { margin-top: 7px; color: var(--hud-muted); font-size: 13px; }
 .readout-cost strong { margin-left: 8px; color: var(--hud-cyan); font: 600 17px/1 var(--number-font); }
+.hero-delta { display: inline-block; margin-top: 6px; font: 600 13px/1 var(--number-font); letter-spacing: .02em; }
+.hero-delta.up { color: var(--warn); }
+.hero-delta.down { color: var(--ok); }
 .observatory-sources {
   position: relative;
   z-index: 1;

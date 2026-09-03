@@ -27,6 +27,8 @@ from .models import (
     project_display,
 )
 
+_MILLION = 1_000_000
+
 
 # claude-mem 不是独立模型供应商：它可以调用 Codex 或 Grok，但在页面统一
 # 拆为一个展示来源，同时保留 by_source 的真实物理来源审计口径。
@@ -99,6 +101,19 @@ def _cost_from_row(r: dict, pricing: dict) -> float:
         long_context=long_context,
         priced_at=priced_at,
     )
+
+
+def _cache_savings_from_row(r: dict, pricing: dict) -> float:
+    """这条分组行的缓存命中，比全价重新输入省了多少钱。"""
+    priced_at = date.fromisoformat(r["pricing_date"]) if r.get("pricing_date") else None
+    threshold = pricing_mod.long_context_threshold_for_model(r["model"], pricing, priced_at)
+    long_context = bool(r.get(f"context_gt_{threshold}", 0)) if threshold else False
+    rates = pricing_mod.rates_for_model(
+        r["model"], pricing, long_context=long_context, priced_at=priced_at
+    )
+    cache_read = int(r.get("cache_read") or 0)
+    saved_per_token = max(0.0, rates["input"] - rates["cache_read"])
+    return cache_read * saved_per_token / _MILLION
 
 
 def _pricing_context_sql(pricing: dict) -> tuple[str, str]:
@@ -523,6 +538,34 @@ def audit(
         }
         for row in mixed_rows
     ]
+    # 前面 mixed_rows 只取了 Top 10 做展示；这里另算同一 90 天窗口内全部命中
+    # 会话的合计占比，让人看出这是无关紧要的零星几条，还是已经影响不少数据。
+    mixed_totals = conn.execute(
+        f"""
+        SELECT COUNT(*) AS session_count, COALESCE(SUM(total), 0) AS total FROM (
+            SELECT session_id, SUM({_total_sql()}) AS total
+            FROM usage_events
+            WHERE session_id != '' AND date_local >= ?
+            GROUP BY session_id
+            HAVING COUNT(DISTINCT source) > 1
+                OR COUNT(DISTINCT model) > 1
+                OR COUNT(DISTINCT project) > 1
+        )
+        """,
+        (mixed_cutoff,),
+    ).fetchone()
+    window_total = int(
+        conn.execute(
+            f"SELECT COALESCE(SUM({_total_sql()}), 0) AS total FROM usage_events WHERE date_local >= ?",
+            (mixed_cutoff,),
+        ).fetchone()["total"]
+    )
+    mixed_total = int(mixed_totals["total"] or 0)
+    mixed_sessions_summary = {
+        "session_count": int(mixed_totals["session_count"] or 0),
+        "total": mixed_total,
+        "pct": round(mixed_total / window_total * 100, 2) if window_total else 0.0,
+    }
 
     distinct_models = [
         row["model"]
@@ -534,6 +577,51 @@ def audit(
         model for model in distinct_models
         if pricing_mod.is_unknown_model(model, pricing)
     ]
+    unknown_models_detail = []
+    if unknown_models:
+        placeholders = ",".join("?" for _ in unknown_models)
+        unknown_rows = conn.execute(
+            f"""
+            SELECT model, source, COUNT(*) AS records, SUM({_total_sql()}) AS total,
+                   SUM(input_tokens) AS input, SUM(output_tokens) AS output,
+                   SUM(cache_read_tokens) AS cache_read,
+                   SUM(cache_creation_tokens) AS cache_creation,
+                   SUM(reasoning_tokens) AS reasoning
+            FROM usage_events
+            WHERE model IN ({placeholders})
+            GROUP BY model, source
+            """,
+            unknown_models,
+        ).fetchall()
+        for row in unknown_rows:
+            r = dict(row)
+            # 未知 model 走 default 价目（非 0），可以直接算出估算费用；default 没
+            # 有 long_context/next_pricing 分档，聚合口径够用，不用逐行取历史日期。
+            # 按 source 分组、用 _row_output 折 OpenCode 的 reasoning 进 output，
+            # 和 _cost_from_row 同一套口径，否则 total 里含 reasoning 但 cost_usd
+            # 没算，OpenCode 上的未知模型费用会算少。
+            cost = pricing_mod.cost_for(
+                r["model"],
+                input_tokens=int(r["input"] or 0),
+                output_tokens=_row_output(r),
+                cache_read_tokens=int(r["cache_read"] or 0),
+                cache_creation_tokens=int(r["cache_creation"] or 0),
+                pricing=pricing,
+            )
+            unknown_models_detail.append({
+                "model": r["model"],
+                "records": int(r["records"] or 0),
+                "total": int(r["total"] or 0),
+                "cost_usd": round(cost, 4),
+            })
+        unknown_models_detail.sort(key=lambda d: d["total"], reverse=True)
+    grand_total = sum(s["total"] for s in sources)
+    unknown_total = sum(d["total"] for d in unknown_models_detail)
+    unknown_models_summary = {
+        "total": unknown_total,
+        "cost_usd": round(sum(d["cost_usd"] for d in unknown_models_detail), 4),
+        "pct": round(unknown_total / grand_total * 100, 2) if grand_total else 0.0,
+    }
 
     issues = []
     total_events = meta_data["total_events"]
@@ -569,13 +657,33 @@ def audit(
     if mixed_sessions:
         issues.append({
             "level": "info",
-            "message": f"发现 {len(mixed_sessions)} 个跨来源/模型/项目会话样例",
+            "message": (
+                f"发现 {mixed_sessions_summary['session_count']} 个跨来源/模型/项目会话，"
+                f"占近 90 天用量的 {mixed_sessions_summary['pct']}%"
+            ),
         })
     if unknown_models:
         issues.append({
             "level": "warn",
-            "message": f"发现 {len(unknown_models)} 个未知模型按 default 估价",
+            "message": (
+                f"发现 {len(unknown_models)} 个未知模型按 default 估价，"
+                f"累计约 ${unknown_models_summary['cost_usd']:,.2f}"
+                f"（占总用量 {unknown_models_summary['pct']}%）"
+            ),
         })
+
+    # 价目表太久没跟官方核实，涨价/降价没跟上会让费用估算悄悄偏离。
+    verified_date = (pricing.get("_meta") or {}).get("verified_date")
+    if verified_date:
+        try:
+            pricing_age_days = (_today_local() - date.fromisoformat(verified_date)).days
+        except ValueError:
+            pricing_age_days = None
+        if pricing_age_days is not None and pricing_age_days >= config.PRICING_STALE_DAYS:
+            issues.append({
+                "level": "warn",
+                "message": f"价目表已 {pricing_age_days} 天没核实过官方价格，可能有模型涨价/降价没跟上",
+            })
 
     latest_mtime = state["latest_mtime"]
     return {
@@ -594,7 +702,10 @@ def audit(
             "total_offset": int(state["total_offset"] or 0),
         },
         "mixed_sessions": mixed_sessions,
+        "mixed_sessions_summary": mixed_sessions_summary,
         "unknown_models": unknown_models,
+        "unknown_models_detail": unknown_models_detail,
+        "unknown_models_summary": unknown_models_summary,
         "issues": issues,
     }
 
@@ -847,21 +958,23 @@ def insights(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
             ),
         })
 
-    cache_row = conn.execute(
-        """
-        SELECT SUM(input_tokens) AS input,
-               SUM(cache_read_tokens) AS cache_read,
-               SUM(output_tokens + CASE WHEN source = ? THEN reasoning_tokens ELSE 0 END) AS output
-        FROM usage_events
-        WHERE date_local BETWEEN ? AND ?
-        """,
-        (SOURCE_OPENCODE, start_today, end_today),
-    ).fetchone()
-    input_total = int((cache_row["input"] or 0) + (cache_row["cache_read"] or 0))
-    cache_read = int(cache_row["cache_read"] or 0)
-    output_tokens = int(cache_row["output"] or 0)
+    # 按 model 分组算（而不是整体一条 SQL），才能按各自单价算出缓存命中
+    # 实际省了多少钱；顺带替掉原来单独的 cache_row 汇总查询。
+    today_grouped_rows = _grouped(conn, start_today, end_today, pricing)
+    input_total = sum(int(r["input"] or 0) + int(r["cache_read"] or 0) for r in today_grouped_rows)
+    cache_read = sum(int(r["cache_read"] or 0) for r in today_grouped_rows)
+    output_tokens = sum(_row_output(r) for r in today_grouped_rows)
+    cache_savings_usd = round(
+        sum(_cache_savings_from_row(r, pricing) for r in today_grouped_rows), 4
+    )
     cache_ratio = round((cache_read / input_total) * 100, 1) if input_total else 0
     output_ratio = round((output_tokens / max(1, input_total)) * 100, 1) if input_total else 0
+    if cache_savings_usd > 0:
+        cards.append({
+            "level": "info",
+            "title": "缓存帮你省了多少",
+            "body": f"今日缓存命中省下约 ${cache_savings_usd:,.2f}（相当于少付这么多本该按全价重新输入的费用）。",
+        })
 
     return {
         "date": today_key,
@@ -871,6 +984,7 @@ def insights(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
             "seven_day_nonzero_avg": baseline,
             "cache_read_ratio": cache_ratio,
             "output_input_ratio": output_ratio,
+            "cache_savings_usd": cache_savings_usd,
         },
         "cards": cards,
     }

@@ -56,6 +56,7 @@
           <strong class="readout-total" id="heroTotal" title="">—</strong>
           <span class="readout-unit">TOKENS</span>
           <span class="readout-cost">预估费用 <strong id="heroCost">¥—</strong></span>
+          <span class="hero-delta" id="heroDelta"></span>
         </div>
       </div>
       <div class="observatory-sources observatory-sources-right" id="obsSourcesRight" aria-label="来源用量，右侧"></div>
@@ -114,6 +115,7 @@
       </div>
       <button class="mini-btn" id="exportCsv" type="button">导出当前 CSV</button>
     </div>
+    <div class="source-filter-chip" id="sourceFilterChip" style="display:none"></div>
     <div class="tables">
       <div class="table-block">
         <h3>按模型</h3>

@@ -356,6 +356,88 @@ class TestAuditAndInsights(unittest.TestCase):
         self.assertEqual(sources["claude"]["total"], 10)
         self.assertEqual(sources["codex"]["total"], 120)
 
+    def test_audit_unknown_models_detail_reports_cost_and_pct(self):
+        from tokenstat import pricing as pricing_mod
+
+        pricing_mod.clear_unknown_models()
+        # "known" 在这个类的共享 self.pricing 里其实并没有真的配价（沿用
+        # default），这里额外补一份把它标记为已知，才能让"mystery-model"
+        # 单独作为未知模型被识别，占比才有意义。
+        priced = {
+            "default": self.pricing["default"],
+            "anthropic": {}, "openai": {"known": self.pricing["default"]},
+        }
+        db.insert_records(self.conn, [
+            UsageRecord(ts=_ts("2026-06-06"), source="grok", model="mystery-model",
+                        project="/tmp/c", input_tokens=1000, total_tokens=1000,
+                        dedup_key="unk1"),
+        ])
+        a = aggregate.audit(self.conn, priced)
+        self.assertEqual(a["unknown_models"], ["mystery-model"])
+        detail = {d["model"]: d for d in a["unknown_models_detail"]}
+        self.assertIn("mystery-model", detail)
+        self.assertEqual(detail["mystery-model"]["total"], 1000)
+        # default 价目 input=1$/M -> 1000 token = $0.001
+        self.assertAlmostEqual(detail["mystery-model"]["cost_usd"], 0.001, places=6)
+        # 总量 = 10(claude,known) + 120(codex,known) + 1000(grok,mystery) = 1130
+        self.assertAlmostEqual(a["unknown_models_summary"]["pct"], 1000 / 1130 * 100, places=2)
+        self.assertAlmostEqual(a["unknown_models_summary"]["cost_usd"], 0.001, places=6)
+        warn_msgs = [i["message"] for i in a["issues"] if i["level"] == "warn"]
+        self.assertTrue(any("未知模型" in m and "$" in m for m in warn_msgs))
+
+    def test_audit_unknown_model_cost_folds_opencode_reasoning_into_output(self):
+        # OpenCode 的 reasoning 独立于 output 存字段，_row_output() 规定上屏/
+        # 计费时要并入 output；这条未知模型估算费用必须走同一口径，不能只按
+        # output_tokens 算漏掉 reasoning 那部分。
+        from tokenstat import pricing as pricing_mod
+
+        pricing_mod.clear_unknown_models()
+        priced = {
+            "default": self.pricing["default"],
+            "anthropic": {}, "openai": {"known": self.pricing["default"]},
+        }
+        db.insert_records(self.conn, [
+            UsageRecord(ts=_ts("2026-06-06"), source="opencode", model="oc-mystery",
+                        project="/tmp/oc", output_tokens=1000, reasoning_tokens=500,
+                        total_tokens=1500, dedup_key="oc-unk1"),
+        ])
+        a = aggregate.audit(self.conn, priced)
+        detail = {d["model"]: d for d in a["unknown_models_detail"]}
+        self.assertIn("oc-mystery", detail)
+        # default 价目 output=1$/M；output_tokens 折入 reasoning 后 = 1000+500=1500
+        self.assertAlmostEqual(detail["oc-mystery"]["cost_usd"], 0.0015, places=8)
+
+    def test_audit_pricing_staleness_warns_when_verified_date_too_old(self):
+        stale_pricing = dict(self.pricing)
+        stale_pricing["_meta"] = {"verified_date": "2026-01-01"}  # 远早于 today (2026-06-06)
+        with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+            a = aggregate.audit(self.conn, stale_pricing)
+        self.assertEqual(a["status"], "warn")
+        self.assertTrue(any("核实过官方价格" in i["message"] for i in a["issues"]))
+
+    def test_audit_pricing_freshness_no_warning_when_recently_verified(self):
+        fresh_pricing = dict(self.pricing)
+        fresh_pricing["_meta"] = {"verified_date": "2026-06-01"}
+        with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+            a = aggregate.audit(self.conn, fresh_pricing)
+        self.assertFalse(any("核实过官方价格" in i["message"] for i in a["issues"]))
+
+    def test_audit_mixed_sessions_summary_percentage(self):
+        # s2 已经跨了 source(codex 单一) 不算混合；新插一条让 s2 也跨 project
+        db.insert_records(self.conn, [
+            UsageRecord(ts=_ts("2026-06-06") + 1, source="codex", model="known",
+                        project="/tmp/other", input_tokens=10, total_tokens=10,
+                        session_id="s2", dedup_key="b2"),
+        ])
+        with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+            a = aggregate.audit(self.conn, self.pricing)
+        summary = a["mixed_sessions_summary"]
+        self.assertEqual(summary["session_count"], 1)
+        self.assertEqual(summary["total"], 130)  # s2 的 120+10
+        # 全库总量 = 10(s1) + 120(s2) + 10(s2 新增) = 140
+        self.assertAlmostEqual(summary["pct"], 130 / 140 * 100, places=2)
+        self.assertTrue(any("占近 90 天用量" in i["message"] for i in a["issues"]))
+
     def test_audit_unknown_models_are_limited_to_current_db(self):
         from tokenstat import pricing as pricing_mod
 
@@ -387,6 +469,31 @@ class TestAuditAndInsights(unittest.TestCase):
         bodies = " ".join(card["body"] for card in data["cards"])
         self.assertIn("b / codex", bodies)
         self.assertIn("codex / known", bodies)
+
+    def test_insights_reports_cache_savings_in_usd(self):
+        pricing = {
+            "default": {"input": 1, "output": 1, "cache_read": 1,
+                        "cache_write_5m": 1, "cache_write_1h": 1},
+            "anthropic": {}, "openai": {
+                "priced-model": {"input": 10, "output": 10, "cache_read": 1,
+                                  "cache_write_5m": 1, "cache_write_1h": 1},
+            },
+        }
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(ts=_ts("2026-06-06"), source="codex", model="priced-model",
+                            project="/tmp/x", input_tokens=1_000_000, cache_read_tokens=1_000_000,
+                            total_tokens=2_000_000, dedup_key="cache-test"),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+                data = aggregate.insights(conn, pricing)
+        finally:
+            conn.close()
+        # 省下的钱 = cache_read(1M) * (input$10/M - cache_read$1/M) = $9
+        self.assertAlmostEqual(data["metrics"]["cache_savings_usd"], 9.0, places=6)
+        self.assertTrue(any("缓存" in c["title"] and "$9" in c["body"] for c in data["cards"]))
 
     def test_insights_uses_week_baseline_without_empty_yesterday_card(self):
         conn = db.get_conn(":memory:")

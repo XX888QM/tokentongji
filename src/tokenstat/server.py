@@ -366,7 +366,33 @@ class Handler(BaseHTTPRequestHandler):
                 )
         data["runtime"] = _ingest_runtime()
         data["retention_note"] = "已入库数据独立保存在本机 SQLite；删除原始日志不会删除历史统计。"
+        self._append_runtime_issues(data)
         self._send_json(data)
+
+    def _append_runtime_issues(self, data: dict) -> None:
+        """把后台核对/备份这些运行期状态也算进健康判定，不等来源静默好几天才报警。"""
+        runtime_error = data["runtime"].get("last_error")
+        if runtime_error:
+            data["issues"].append({
+                "level": "warn",
+                "message": f"最近一次后台核对出错：{runtime_error}",
+            })
+        backup_at = data["db"].get("latest_backup_at")
+        if backup_at:
+            backup_dt = datetime.strptime(backup_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=_LOCAL_TZ)
+            backup_age_days = (datetime.now(tz=_LOCAL_TZ) - backup_dt).days
+            if backup_age_days >= config.BACKUP_STALE_DAYS:
+                data["issues"].append({
+                    "level": "warn",
+                    "message": f"数据库已 {backup_age_days} 天没备份，建议点一下「立即备份」",
+                })
+        else:
+            data["issues"].append({
+                "level": "warn",
+                "message": "还没做过数据库备份，建议点一下「立即备份」",
+            })
+        if any(i["level"] == "warn" for i in data["issues"]):
+            data["status"] = "warn"
 
     def _api_health(self):
         audit = _load_audit()
@@ -379,6 +405,7 @@ class Handler(BaseHTTPRequestHandler):
             "issues": audit["issues"],
             "runtime": _ingest_runtime(),
         }
+        self._append_runtime_issues(payload)
         self._send_json(payload)
 
     def _api_insights(self):

@@ -1,6 +1,7 @@
 """回归测试：/api/daily 非法 days 参数 fallback 行为。"""
 import io
 import json
+import os
 import tempfile
 import time
 import unittest
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 from unittest.mock import patch
 
-from tokenstat import db, ingest, server
+from tokenstat import config, db, ingest, server
 from tokenstat.models import UsageRecord
 from tokenstat.server import Handler
 
@@ -335,6 +336,68 @@ class TestDailyEndpointFallback(unittest.TestCase):
         self.assertEqual(code, 500)
         self.assertFalse(body["ok"])
         self.assertIn("osascript failed", body["error"])
+
+
+class TestRuntimeHealthIssues(unittest.TestCase):
+    """/api/audit、/api/health 应把后台核对出错、备份太久没做也计入健康判定，
+    不用等某个来源连续好几天没数据才报警。"""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self._db_path = self._tmpdir.name + "/test.db"
+        conn = db.get_conn(self._db_path)
+        db.init_db(conn)
+        conn.close()
+        self._data_dir = Path(self._tmpdir.name) / "data"
+        self._data_dir.mkdir()
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def test_ingest_last_error_surfaces_as_warn_issue(self):
+        with patch("tokenstat.server.config.DATA_DIR", self._data_dir), \
+             patch.dict(server._INGEST_RUNTIME, {"last_error": "database is locked"}):
+            code, body = _call_get("/api/audit", self._db_path)
+        self.assertEqual(code, 200)
+        self.assertEqual(body["status"], "warn")
+        self.assertTrue(any("后台核对出错" in i["message"] for i in body["issues"]))
+
+    def test_ingest_last_error_also_surfaces_on_health_endpoint(self):
+        with patch("tokenstat.server.config.DATA_DIR", self._data_dir), \
+             patch.dict(server._INGEST_RUNTIME, {"last_error": "boom"}):
+            code, body = _call_get("/api/health", self._db_path)
+        self.assertEqual(code, 200)
+        self.assertEqual(body["status"], "warn")
+        self.assertTrue(any("后台核对出错" in i["message"] for i in body["issues"]))
+
+    def test_no_backup_ever_warns(self):
+        with patch("tokenstat.server.config.DATA_DIR", self._data_dir):
+            code, body = _call_get("/api/audit", self._db_path)
+        self.assertEqual(code, 200)
+        self.assertEqual(body["status"], "warn")
+        self.assertTrue(any("还没做过数据库备份" in i["message"] for i in body["issues"]))
+
+    def test_recent_backup_does_not_warn(self):
+        backups = self._data_dir / "backups"
+        backups.mkdir()
+        (backups / "tokenstat-recent.db").write_bytes(b"x")
+        with patch("tokenstat.server.config.DATA_DIR", self._data_dir):
+            code, body = _call_get("/api/audit", self._db_path)
+        self.assertEqual(code, 200)
+        self.assertFalse(any("备份" in i["message"] for i in body["issues"]))
+
+    def test_old_backup_warns(self):
+        backups = self._data_dir / "backups"
+        backups.mkdir()
+        old_file = backups / "tokenstat-old.db"
+        old_file.write_bytes(b"x")
+        old_ts = time.time() - (config.BACKUP_STALE_DAYS + 1) * 86400
+        os.utime(old_file, (old_ts, old_ts))
+        with patch("tokenstat.server.config.DATA_DIR", self._data_dir):
+            code, body = _call_get("/api/audit", self._db_path)
+        self.assertEqual(code, 200)
+        self.assertEqual(body["status"], "warn")
+        self.assertTrue(any("天没备份" in i["message"] for i in body["issues"]))
 
 
 class TestIngestToApi(unittest.TestCase):

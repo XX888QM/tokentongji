@@ -35,6 +35,10 @@ let projectTotalTokens = 0;
 let projectTotalCost = 0;
 let settingsReturnFocus = null;
 let heroNumberFrame = null;
+// 来源筛选：点来源名字/徽标只看这个来源，不用重新请求接口，本地过滤已取数据
+let sourceFilter = null;
+let lastBreakdownData = null;
+let lastTopSessionsData = null;
 
 const VALID_PERIODS = new Set(['today', 'week', 'month', 'all']);
 
@@ -154,6 +158,22 @@ function localDateKey(now = new Date()) {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+// 本地(浏览器)日期不一定和后端的 Asia/Shanghai 本地日一致，月底预估要按
+// 后端算周期用的同一个时区取"今天是本月第几天、本月一共几天"。
+function shanghaiDayInfo(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now);
+  const v = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  const year = Number(v.year);
+  const month = Number(v.month);
+  const day = Number(v.day);
+  // Date.UTC(year, month, 0) 的 month 是 0-based，传"本月(1-based)"当 0-based
+  // 正好是下个月，day=0 回退到上一天，即本月最后一天。
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return { day, daysInMonth };
+}
+
 const fmt = (n) => (n == null ? '0' : Number(n).toLocaleString('en-US'));
 const fmtYuan = (yuan) => '¥' + (Math.abs(Number(yuan) || 0) >= 1e4 ? fmtCN(yuan) : (Number(yuan) || 0).toFixed(2));
 const fmtCost = (n) => fmtYuan((Number(n) || 0) * CNY_RATE);
@@ -201,7 +221,7 @@ const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 100) : 0);
 const sourceTotal = (row) => fmtCN(row.total);
 
 function observatoryRow(row, index) {
-  return `<div class="observatory-source-row" style="--source-color:${row.color};--signal-delay:${index * 0.42}s">` +
+  return `<div class="observatory-source-row" data-source="${esc(row.source)}" style="--source-color:${row.color};--signal-delay:${index * 0.42}s">` +
     `<div class="observatory-source-name"><span class="observatory-dot"></span><span>${esc(row.label)}</span></div>` +
     `<strong title="${fmt(row.total)} tokens">${sourceTotal(row)}</strong>` +
     `<span class="observatory-source-pct">${row.pct}%</span>` +
@@ -287,8 +307,19 @@ async function maybeNotifyAlert(message) {
   }
 }
 
+// 今天比昨天涨跌多少：花得比昨天多标红（该注意了），比昨天少标绿。
+function heroDeltaLabel(today, yesterday) {
+  if (!yesterday || !yesterday.total) return '';
+  const delta = (today.total || 0) - yesterday.total;
+  const pct = Math.round((delta / yesterday.total) * 100);
+  if (pct === 0) return '';
+  const sign = delta > 0 ? '+' : '';
+  const cls = delta > 0 ? 'up' : 'down';
+  return `<span class="hero-delta ${cls}">${sign}${pct}% vs 昨天</span>`;
+}
+
 // ---- HERO（今日）----
-function renderHero(p, day) {
+function renderHero(p, day, yesterday) {
   const src = p.by_display_source || p.by_source || {};
   const total = p.total || 0;
   const rows = sourceRows(src, total);
@@ -298,6 +329,8 @@ function renderHero(p, day) {
   renderHeroTotal(heroEl, total);
   heroEl.title = fmt(total) + ' tokens';
   document.getElementById('heroCost').textContent = fmtCost(p.cost_usd);
+  const deltaEl = document.getElementById('heroDelta');
+  if (deltaEl) deltaEl.innerHTML = heroDeltaLabel(p, yesterday);
 
   let remaining = 100;
   document.getElementById('heroSplitbar').innerHTML = rows.map((row, index) => {
@@ -314,16 +347,27 @@ function renderHero(p, day) {
   renderObservatorySources(rows);
 }
 
+// 本月卡片额外估一下：按到今天为止的花钱速度，月底大概会花多少。
+function monthProjectionLine(p) {
+  if (!p || !p.cost_usd) return '';
+  const { day, daysInMonth } = shanghaiDayInfo();
+  if (day <= 0 || daysInMonth <= 0) return '';
+  const projected = (p.cost_usd / day) * daysInMonth;
+  return `<div class="s-projection">预计月底 ${fmtCost(projected)}</div>`;
+}
+
 // ---- 支撑数据卡（昨天/近7天/本月）----
 function statCard(label, p) {
   const split = sourceRows(p.by_display_source || p.by_source || {}, p.total || 0)
     .map((row) => `<span title="${fmt(row.total)} tokens" style="color:${row.color}">${esc(row.label)} ${sourceTotal(row)}</span>`)
     .join('');
+  const projection = label === '本月' ? monthProjectionLine(p) : '';
   return `
     <div class="stat-card">
       <div class="s-label">${label}</div>
       <div class="s-value" title="${fmt(p.total)}">${fmtCN(p.total)}</div>
       <div class="s-cost">${fmtCost(p.cost_usd)}</div>
+      ${projection}
       <div class="s-split">${split}</div>
     </div>`;
 }
@@ -331,7 +375,7 @@ function statCard(label, p) {
 async function loadSummary() {
   const s = await getJSON('/api/summary');
   const day = (s.generated_at || '----------').slice(0, 10);
-  renderHero(s.periods.today, day);
+  renderHero(s.periods.today, day, s.periods.yesterday);
   document.getElementById('stats').innerHTML =
     statCard('昨天', s.periods.yesterday) +
     statCard('近7天', s.periods.week) +
@@ -418,10 +462,38 @@ async function loadDaily() {
   }
 }
 
-const badge = (src, label = src) => `<span class="badge ${esc(src)}">${esc(label)}</span>`;
+// filterable=false 用于 claude-mem 徽标：它是展示口径，不是 by_model/by_project
+// 数组里真实的 source 字段值，点了也筛不出东西，干脆不做成可点击的。
+const badge = (src, label = src, filterable = true) =>
+  `<span class="badge ${esc(src)}"${filterable ? ` data-source="${esc(src)}"` : ''}>${esc(label)}</span>`;
 const sourceBadge = (row) => row.collector === 'claude-mem'
-  ? badge('claude-mem')
+  ? badge('claude-mem', 'claude-mem', false)
   : badge(row.source);
+
+// ---- 来源筛选：点来源名字/徽标只看这个来源 ----
+function toggleSourceFilter(source) {
+  sourceFilter = sourceFilter === source ? null : source;
+  renderSourceFilterChip();
+  projectPage = 0;
+  if (lastBreakdownData) renderBreakdown(lastBreakdownData);
+  if (lastTopSessionsData) renderTopSessions(lastTopSessionsData);
+}
+
+function renderSourceFilterChip() {
+  const el = document.getElementById('sourceFilterChip');
+  if (!el) return;
+  if (!sourceFilter) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  const meta = metaForSource(sourceFilter);
+  el.innerHTML =
+    `<span>只看来源：<strong style="color:${meta.color}">${esc(meta.label)}</strong></span>` +
+    `<button type="button" id="clearSourceFilter">✕ 清除</button>`;
+  el.style.display = 'flex';
+  document.getElementById('clearSourceFilter').addEventListener('click', () => toggleSourceFilter(sourceFilter));
+}
 const usageTotalCell = (row) => row.collector === 'claude-mem' ? exactNumCell(row.total) : numCell(row.total);
 // 模型名去掉末尾日期后缀（如 -20251001），更清爽
 const modelDisplay = (m) => (m || '').replace(/-\d{6,8}$/, '');
@@ -479,8 +551,11 @@ async function loadAudit() {
     kv('最近备份', a.db?.latest_backup_at || '尚未备份', a.db?.latest_backup || '') +
     kv('DB 大小', fmtCN(a.db?.size_bytes || 0) + 'B', fmt(a.db?.size_bytes || 0) + ' bytes');
   const issueHtml = (a.issues || []).map(issueBadge).join('');
-  const unknown = (a.unknown_models || []).slice(0, 5)
-    .map((m) => `<div class="issue warn">未知模型：${esc(modelDisplay(m))}</div>`).join('');
+  // 不再只挑前 5 个报名字：每个未知模型都带上花了多少钱，一眼分清是几十块
+  // 的小事还是几百块的大事。汇总的那句"发现 N 个…累计约 $X"已经在 issues 里。
+  const unknown = (a.unknown_models_detail || [])
+    .map((d) => `<div class="issue warn">${esc(modelDisplay(d.model))}：约 ${fmtCost(d.cost_usd)}（${fmtCN(d.total)} tokens）</div>`)
+    .join('');
   document.getElementById('auditIssues').innerHTML =
     issueHtml + unknown || '<div class="issue ok">未发现明显口径风险</div>';
   setMaintenanceStatus(a.runtime);
@@ -535,8 +610,14 @@ async function loadTopSessions() {
   const my = ++topSessionsSeq;
   const b = await getJSON(`/api/top_sessions?period=${currentPeriod}&limit=10`);
   if (my !== topSessionsSeq) return;  // 已有更新的请求，丢弃这次迟到响应
+  lastTopSessionsData = b;
+  renderTopSessions(b);
+}
+
+function renderTopSessions(b) {
+  const rows = sourceFilter ? b.sessions.filter((r) => r.source === sourceFilter) : b.sessions;
   document.querySelector('#topSessionsTable tbody').innerHTML =
-    b.sessions.map((r, i) => `<tr>
+    rows.map((r, i) => `<tr>
       <td class="num">${i + 1}</td>
       <td><button class="session-link" data-session="${esc(r.session_id)}">${esc(r.date)}</button></td>
       <td>${esc(r.project) || '(未知)'}</td>
@@ -609,10 +690,16 @@ async function loadBreakdown() {
   const my = ++breakdownSeq;
   const b = await getJSON(`/api/breakdown?period=${currentPeriod}`);
   if (my !== breakdownSeq) return;  // 已有更新的请求，丢弃这次迟到响应
-  const mRows = b.by_model;
-  // 合计用后端权威总额，保证「按模型」「按项目」两表合计分毫不差（各自逐行 round 会差几分钱）
-  const mTotalTokens = b.total_tokens;
-  const mTotalCost   = b.total_cost_usd;
+  lastBreakdownData = b;
+  renderBreakdown(b);
+}
+
+function renderBreakdown(b) {
+  const mRows = sourceFilter ? b.by_model.filter((r) => r.source === sourceFilter) : b.by_model;
+  // 合计用后端权威总额，保证「按模型」「按项目」两表合计分毫不差（各自逐行 round 会差几分钱）；
+  // 筛了来源之后后端总额不再适用，改成从筛选后的行现算。
+  const mTotalTokens = sourceFilter ? mRows.reduce((sum, r) => sum + r.total, 0) : b.total_tokens;
+  const mTotalCost   = sourceFilter ? mRows.reduce((sum, r) => sum + r.cost_usd, 0) : b.total_cost_usd;
   document.querySelector('#modelTable tbody').innerHTML =
     mRows.map((r) => `<tr>
         <td>${esc(modelDisplay(r.model))}</td><td>${sourceBadge(r)}</td>
@@ -621,7 +708,7 @@ async function loadBreakdown() {
       </tr>`).join('') || '<tr><td colspan="8">暂无数据</td></tr>';
   document.querySelector('#modelTable tfoot').innerHTML = '';
 
-  projectRows = b.by_project;
+  projectRows = sourceFilter ? b.by_project.filter((r) => r.source === sourceFilter) : b.by_project;
   projectTotalTokens = mTotalTokens;
   projectTotalCost = mTotalCost;
   // 每页行数跟随「按模型」行数，让两侧数据行保持整齐（下限 6 防病态分页）
@@ -724,9 +811,30 @@ function setupSettingsInteractions() {
 
 function setupTopSessionDrilldown() {
   document.getElementById('topSessionsTable').addEventListener('click', (e) => {
+    const sourceEl = e.target.closest('[data-source]');
+    if (sourceEl) {
+      toggleSourceFilter(sourceEl.dataset.source);
+      return;
+    }
     const btn = e.target.closest('[data-session]');
     if (!btn) return;
     loadSessionDetail(btn.dataset.session);
+  });
+}
+
+// 观测台来源名字、按模型/按项目表格里的来源徽标都能点，点了只看这个来源
+function setupSourceFilterClicks() {
+  ['obsSourcesLeft', 'obsSourcesRight'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-source]');
+      if (!row) return;
+      toggleSourceFilter(row.dataset.source);
+    });
+  });
+  document.querySelector('.tables')?.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-source]');
+    if (!el) return;
+    toggleSourceFilter(el.dataset.source);
   });
 }
 
@@ -746,6 +854,7 @@ async function loadRates() {
 async function main() {
   setupPeriodToggle();
   setupTopSessionDrilldown();
+  setupSourceFilterClicks();
   setupSettingsInteractions();
   setupMaintenanceActions();
   await loadRates();

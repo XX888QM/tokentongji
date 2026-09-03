@@ -68,6 +68,10 @@ INGEST_INTERVAL_SEC = _env_int("TOKENSTAT_INGEST_INTERVAL", 60)
 # ---- 数据质量：某来源落后最新数据源多少天算「陈旧/停更」 ----
 STALE_SOURCE_DAYS = _env_int("TOKENSTAT_STALE_DAYS", 3)
 
+# ---- 运维提醒：价目表多久没核实、数据库多久没备份算「过期」 ----
+PRICING_STALE_DAYS = _env_int("TOKENSTAT_PRICING_STALE_DAYS", 90)
+BACKUP_STALE_DAYS = _env_int("TOKENSTAT_BACKUP_STALE_DAYS", 7)
+
 # ---- 前端自动刷新（秒）----
 DASHBOARD_REFRESH_SEC = _env_int("TOKENSTAT_REFRESH", 30)
 
