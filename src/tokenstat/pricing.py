@@ -105,6 +105,8 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
         return pick("claude-haiku-4-5")
     if clean.startswith("gpt-5-codex") or clean == "codex-auto-review":
         return pick("gpt-5.3-codex", "gpt-5-codex")
+    if clean.startswith("gpt-6"):
+        return pick("gpt-6-astra")
     if clean.startswith("gpt-5.6-sol") or clean.startswith("gpt-daybreak-blue"):
         return pick("gpt-daybreak-blue", "gpt-5.6-sol", "gpt-5.5")
     if clean.startswith("gpt-5.6-terra"):

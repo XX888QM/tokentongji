@@ -65,6 +65,21 @@ class TestNormalization(unittest.TestCase):
     def test_gpt5_versioned(self):
         self.assertEqual(pricing.rates_for_model("gpt-5.4", self.p)["input"], 2.5)
 
+    def test_gpt6_astra_pricing(self):
+        normal = pricing.rates_for_model("gpt-6-astra", self.p, cache_window="30m")
+        long = pricing.rates_for_model(
+            "gpt-6-astra", self.p, cache_window="30m", long_context=True
+        )
+        self.assertEqual(
+            (normal["input"], normal["cache_read"], normal["cache_write"], normal["output"]),
+            (10.0, 1.0, 12.5, 50.0),
+        )
+        self.assertEqual(
+            (long["input"], long["cache_read"], long["cache_write"], long["output"]),
+            (20.0, 2.0, 25.0, 75.0),
+        )
+        self.assertFalse(pricing.is_unknown_model("gpt-6-astra", self.p))
+
     def test_gpt56_flagship_pricing(self):
         sol = pricing.rates_for_model("gpt-5.6-sol", self.p, priced_at=date(2026, 8, 20))
         self.assertEqual(sol["input"], 5.0)
