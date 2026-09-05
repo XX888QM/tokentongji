@@ -148,7 +148,8 @@ def parse_v3_record(obj: dict, source_file: str, pos: int, ctx: dict) -> Optiona
     msg_id = obj.get("id") or str(pos)
     dedup_key = f"openclaw-v3:{msg_id}"
 
-    model = (msg.get("model") or "unknown").strip()
+    raw_model = msg.get("model")
+    model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else "unknown"
     session_id = ctx.get("session_id") or ""
     project = ctx.get("cwd") or "openclaw"
 
@@ -236,7 +237,7 @@ def fetch_records(db_path: Path) -> List[UsageRecord]:
         )
         try:
             rec = parse_v3_record(obj, source_file, seq, ctx)
-        except (TypeError, ValueError):
+        except (AttributeError, OverflowError, TypeError, ValueError):
             continue
         if obj.get("type") == "session" and sid in windows:
             ctx["cwd"] = windows[sid]

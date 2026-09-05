@@ -70,7 +70,10 @@ def fetch_records(db_path: Path) -> List[UsageRecord]:
 
     records = []
     for row in rows:
-        rec = _parse_row(row, db_path)
+        try:
+            rec = _parse_row(row, db_path)
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            continue
         if rec is not None:
             records.append(rec)
     return records

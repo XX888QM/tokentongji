@@ -80,7 +80,10 @@ def fetch_records(
     watermark_blocked = False
 
     for row in rows:
-        rec = _parse_row(row, db_path)
+        try:
+            rec = _parse_row(row, db_path)
+        except (AttributeError, OverflowError, TypeError, ValueError):
+            rec = None
         if rec is not None:
             records.append(rec)
             if not watermark_blocked:

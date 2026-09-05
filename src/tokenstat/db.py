@@ -264,6 +264,63 @@ def delete_openclaw_cross_format_duplicates(
     return conn.total_changes - before
 
 
+def delete_openclaw_trajectory_sessions(
+    conn: sqlite3.Connection, session_ids: Iterable[str], commit: bool = True
+) -> int:
+    """SQLite 权威明细已覆盖的会话，不再保留旧 trajectory 合计行。"""
+    ids = sorted({session_id for session_id in session_ids if session_id})
+    if not ids:
+        return 0
+    before = conn.total_changes
+    placeholders = ",".join("?" for _ in ids)
+    conn.execute(
+        f"""
+        DELETE FROM usage_events
+        WHERE source = 'openclaw'
+          AND source_file LIKE '%.trajectory.jsonl'
+          AND session_id IN ({placeholders})
+        """,
+        ids,
+    )
+    if commit:
+        conn.commit()
+    return conn.total_changes - before
+
+
+def openclaw_trajectory_totals(conn: sqlite3.Connection, session_ids: Iterable[str]) -> dict[str, int]:
+    """返回已入库 trajectory 的会话总量，用于确认 SQLite 明细是否完整覆盖。"""
+    ids = sorted({session_id for session_id in session_ids if session_id})
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        f"""
+        SELECT session_id, SUM(total_tokens) AS total
+        FROM usage_events
+        WHERE source = 'openclaw'
+          AND source_file LIKE '%.trajectory.jsonl'
+          AND session_id IN ({placeholders})
+        GROUP BY session_id
+        """,
+        ids,
+    ).fetchall()
+    return {row["session_id"]: int(row["total"] or 0) for row in rows}
+
+
+def has_claude_iterations(conn: sqlite3.Connection, base_key: str) -> bool:
+    """同一 Claude 消息已有 fallback 明细时，旧顶层快照不能再次入库。"""
+    prefix = f"{base_key}:iteration:"
+    row = conn.execute(
+        """
+        SELECT 1 FROM usage_events
+        WHERE dedup_key >= ? AND dedup_key < ?
+        LIMIT 1
+        """,
+        (prefix, prefix + "\U0010ffff"),
+    ).fetchone()
+    return row is not None
+
+
 def delete_dedup_keys(
     conn: sqlite3.Connection, source: str, keys: Iterable[str], commit: bool = True
 ) -> int:

@@ -42,6 +42,8 @@ VALID_CATEGORIES = (CATEGORY_MAIN, CATEGORY_SUBAGENT, CATEGORY_OBSERVER)
 
 # 字符串字段上限（model/project/session_id），防损坏日志塞超长值
 _MAX_STR = 512
+SQLITE_INT_MAX = (1 << 63) - 1
+_MAX_TIMESTAMP = 253402300799 - 8 * 3600  # 预留上海 UTC+8，datetime 可安全换算
 
 
 @dataclass(frozen=True)
@@ -84,7 +86,11 @@ class UsageRecord:
             raise ValueError(f"未知 source: {self.source!r}，应为 {VALID_SOURCES}")
         if self.category not in VALID_CATEGORIES:
             raise ValueError(f"未知 category: {self.category!r}，应为 {VALID_CATEGORIES}")
-        # 负数 token 视为脏数据，直接拒绝而不是静默吞掉
+        if not isinstance(self.ts, int) or isinstance(self.ts, bool) or not 0 < self.ts <= _MAX_TIMESTAMP:
+            raise ValueError(f"ts 必须为有效 Unix 秒数，收到 {self.ts!r}")
+        if not isinstance(self.pos, int) or isinstance(self.pos, bool) or not 0 <= self.pos <= SQLITE_INT_MAX:
+            raise ValueError(f"pos 必须为 SQLite 可存的非负整数，收到 {self.pos!r}")
+        # 负数或超出 SQLite int64 的 token 视为脏数据，直接拒绝而不是静默吞掉。
         for name in (
             "input_tokens",
             "output_tokens",
@@ -94,10 +100,12 @@ class UsageRecord:
             "total_tokens",
         ):
             value = getattr(self, name)
-            if not isinstance(value, int) or value < 0:
-                raise ValueError(f"{name} 必须为非负整数，收到 {value!r}")
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= SQLITE_INT_MAX:
+                raise ValueError(f"{name} 必须为 SQLite 可存的非负整数，收到 {value!r}")
         if self.request_prompt_tokens is not None and (
-            not isinstance(self.request_prompt_tokens, int) or self.request_prompt_tokens < 0
+            isinstance(self.request_prompt_tokens, bool)
+            or not isinstance(self.request_prompt_tokens, int)
+            or not 0 <= self.request_prompt_tokens <= SQLITE_INT_MAX
         ):
             raise ValueError(
                 "request_prompt_tokens 必须为非负整数或 None，"
@@ -106,9 +114,11 @@ class UsageRecord:
 
         # 损坏/伪造日志可能塞入超长字符串，截断防止撑大 SQLite / 拖慢聚合。
         # frozen dataclass 用 object.__setattr__ 就地改写。
-        for name in ("model", "project", "session_id"):
+        for name in ("model", "project", "session_id", "source_file", "dedup_key"):
             value = getattr(self, name)
-            if isinstance(value, str) and len(value) > _MAX_STR:
+            if not isinstance(value, str):
+                raise ValueError(f"{name} 必须为字符串，收到 {value!r}")
+            if name in ("model", "project", "session_id") and len(value) > _MAX_STR:
                 object.__setattr__(self, name, value[:_MAX_STR])
 
     @property

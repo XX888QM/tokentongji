@@ -23,7 +23,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from ..models import CATEGORY_MAIN, CATEGORY_OBSERVER, SOURCE_CODEX, UsageRecord, parse_iso_utc
+from ..models import (
+    CATEGORY_MAIN, CATEGORY_OBSERVER, SOURCE_CODEX, SQLITE_INT_MAX, UsageRecord, parse_iso_utc,
+)
 
 _FIELDS = (
     "input_tokens",
@@ -109,7 +111,7 @@ def process_record(
 
     if env_type == "session_meta":
         sid = payload.get("id")
-        if sid and sid != state.session_id:
+        if isinstance(sid, str) and sid and sid != state.session_id:
             # 只更新归属 sid，**不重置差分基线**：Codex Desktop 会把父/子线程的
             # session_meta 交错写进同一文件，而 total_token_usage 是文件内连续
             # 计数器，重置基线会把整段累积量再计一遍（实测 ~29% 虚高）。
@@ -121,7 +123,7 @@ def process_record(
             if all(v == 0 for v in state.prev_total.values()):
                 state.pending_baseline = True
         cwd = payload.get("cwd")
-        if cwd and state.cur_cwd is None:
+        if isinstance(cwd, str) and cwd and state.cur_cwd is None:
             # session_meta.cwd 仅作初值；后续 turn_context.cwd 更权威会覆盖
             state.cur_cwd = cwd
         return None
@@ -131,10 +133,10 @@ def process_record(
         if not m:
             cm = payload.get("collaboration_mode") or {}
             m = (cm.get("settings") or {}).get("model")
-        if m:
+        if isinstance(m, str) and m:
             state.cur_model = m
         cwd = payload.get("cwd")
-        if cwd:
+        if isinstance(cwd, str) and cwd:
             state.cur_cwd = cwd
         return None
 
@@ -161,10 +163,12 @@ def process_record(
         except (TypeError, ValueError):
             pass
         else:
-            if 0 <= last_cached <= last_input:
+            if 0 <= last_cached <= last_input <= SQLITE_INT_MAX:
                 request_prompt_tokens = last_input
 
     cur = {k: int(tot.get(k, 0) or 0) for k in _FIELDS}
+    if any(value < 0 or value > SQLITE_INT_MAX for value in cur.values()):
+        return None
     if state.pending_baseline:
         state.pending_baseline = False
         if all(v == 0 for v in state.prev_total.values()):

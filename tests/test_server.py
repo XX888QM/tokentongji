@@ -15,7 +15,7 @@ from tokenstat.models import UsageRecord
 from tokenstat.server import Handler
 
 
-def _call_get(path: str, db_path: str) -> tuple[int, dict]:
+def _call_get(path: str, db_path: str, headers: Optional[dict] = None) -> tuple[int, dict]:
     """模拟一次 GET 请求，返回 (status_code, response_body)。"""
     response_code = [None]
     response_body = io.BytesIO()
@@ -25,6 +25,7 @@ def _call_get(path: str, db_path: str) -> tuple[int, dict]:
             handler = Handler.__new__(Handler)
 
         handler.path = path
+        handler.headers = {"Host": f"127.0.0.1:{config.PORT}", **(headers or {})}
         handler.wfile = response_body
         handler.send_response = lambda code, msg=None: response_code.__setitem__(0, code)
         handler.send_header = lambda k, v: None
@@ -37,7 +38,7 @@ def _call_get(path: str, db_path: str) -> tuple[int, dict]:
     return response_code[0], body
 
 
-def _call_get_bytes(path: str, db_path: str) -> tuple[int, bytes]:
+def _call_get_bytes(path: str, db_path: str, headers: Optional[dict] = None) -> tuple[int, bytes]:
     """模拟一次非 JSON GET（CSV 导出）。"""
     response_code = [None]
     response_body = io.BytesIO()
@@ -45,6 +46,7 @@ def _call_get_bytes(path: str, db_path: str) -> tuple[int, bytes]:
         with patch.object(Handler, "__init__", lambda *a, **kw: None):
             handler = Handler.__new__(Handler)
         handler.path = path
+        handler.headers = {"Host": f"127.0.0.1:{config.PORT}", **(headers or {})}
         handler.wfile = response_body
         handler.send_response = lambda code, msg=None: response_code.__setitem__(0, code)
         handler.send_header = lambda k, v: None
@@ -67,6 +69,7 @@ def _call_post(
     request_body = json.dumps(payload).encode("utf-8")
     request_headers = {
         "Content-Length": str(len(request_body)),
+        "Host": f"127.0.0.1:{config.PORT}",
         **(headers or {}),
     }
 
@@ -220,6 +223,41 @@ class TestDailyEndpointFallback(unittest.TestCase):
         self.assertIn(b"source,collector,model,project", body)
         self.assertIn(b"codex,,gpt-5.5,/tmp/proj", body)
         self.assertIn(b"codex,claude-mem,gpt-5.6-luna,/tmp/claude-mem", body)
+
+    def test_export_escapes_formula_like_text(self):
+        conn = db.get_conn(self._db_path)
+        try:
+            db.insert_records(conn, [
+                UsageRecord(ts=int(time.time()), source="codex", model="=1+1",
+                            project="+formula", input_tokens=1, total_tokens=1,
+                            dedup_key="formula-export"),
+            ])
+        finally:
+            conn.close()
+        _code, body = _call_get_bytes("/api/export?period=today", self._db_path)
+        self.assertIn(b"'=1+1,'+formula", body)
+
+        self.assertEqual(server._safe_csv_text("\t=1+1"), "'\t=1+1")
+
+    def test_rejects_untrusted_host_before_reading_api(self):
+        code, body = _call_get(
+            "/api/summary", self._db_path, headers={"Host": "attacker.example:8787"}
+        )
+        self.assertEqual(code, 403)
+        self.assertEqual(body["error"], "invalid host")
+
+    def test_rejects_untrusted_host_before_action(self):
+        code, body = _call_post(
+            "/api/ingest", self._db_path, {},
+            headers={"Host": "attacker.example:8787", "X-Tokenstat-Action": "ingest"},
+        )
+        self.assertEqual(code, 403)
+        self.assertEqual(body["error"], "invalid host")
+
+    def test_default_http_port_accepts_host_without_port(self):
+        with patch("tokenstat.server.config.PORT", 80):
+            code, _body = _call_get("/api/health", self._db_path, headers={"Host": "localhost"})
+        self.assertEqual(code, 200)
 
     def test_ingest_endpoint_requires_its_own_action_header(self):
         code, body = _call_post("/api/ingest", self._db_path, {}, headers={"X-Tokenstat-Action": "notify"})

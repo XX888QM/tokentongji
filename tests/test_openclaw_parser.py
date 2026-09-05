@@ -102,6 +102,13 @@ class TestV3Format(unittest.TestCase):
         ctx = {}
         self.assertIsNone(openclaw.parse_v3_record(self._msg(total=0), "/f", 0, ctx))
 
+    def test_non_string_model_skipped(self):
+        ctx = {}
+        msg = self._msg()
+        msg["message"]["model"] = 42
+        rec = openclaw.parse_v3_record(msg, "/f", 0, ctx)
+        self.assertEqual(rec.model, "unknown")
+
 
 class TestSqliteFetch(unittest.TestCase):
     def setUp(self):
@@ -230,6 +237,40 @@ class TestSqliteFetch(unittest.TestCase):
         recs = openclaw.fetch_records(self.db_path)
         keys = {r.dedup_key for r in recs}
         self.assertIn("openclaw-v3:after-junk", keys)
+
+    def test_bad_record_does_not_block_following_usage(self):
+        sid = "sid-bad-field"
+        self._add(sid, 0, {"type": "session", "id": sid, "cwd": "/workspace"})
+        bad = {
+            "type": "message",
+            "id": "bad-model",
+            "message": {
+                "role": "assistant",
+                "model": 42,
+                "usage": {"input": 1, "output": 1, "totalTokens": 2},
+                "timestamp": 1_700_000_001_000,
+            },
+        }
+        self._add(sid, 1, bad)
+        self._add(
+            sid,
+            2,
+            {
+                "type": "message",
+                "id": "after-bad",
+                "message": {
+                    "role": "assistant",
+                    "model": "grok-4.6",
+                    "usage": {"input": 5, "output": 2, "totalTokens": 7},
+                    "timestamp": 1_700_000_002_000,
+                },
+            },
+        )
+
+        recs = openclaw.fetch_records(self.db_path)
+        self.assertEqual(
+            [r.dedup_key for r in recs], ["openclaw-v3:bad-model", "openclaw-v3:after-bad"]
+        )
 
 
 if __name__ == "__main__":

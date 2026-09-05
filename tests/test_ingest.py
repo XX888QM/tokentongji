@@ -169,6 +169,55 @@ class TestClaudeIngest(unittest.TestCase):
             ("fallback:iteration:1", "claude-opus-4-8", 100),
         ])
 
+    def test_old_snapshot_after_fallback_does_not_reinsert_base_record(self):
+        final = Path(self.tmp.name) / "final.jsonl"
+        old_copy = Path(self.tmp.name) / "old-copy.jsonl"
+        obj = _assistant("fallback", 200)
+        obj["message"]["usage"]["iterations"] = [
+            {"model": "claude-fable-5", "input_tokens": 0, "output_tokens": 100},
+            {"model": "claude-opus-4-8", "input_tokens": 0, "output_tokens": 200},
+        ]
+        _w(final, [obj])
+        _w(old_copy, [_assistant("fallback", 100)])
+
+        ingest._ingest_file(self.conn, final, "claude", "gpt-5.5")
+        ingest._ingest_file(self.conn, old_copy, "claude", "gpt-5.5")
+
+        rows = self.conn.execute(
+            "SELECT dedup_key, total_tokens FROM usage_events ORDER BY dedup_key"
+        ).fetchall()
+        self.assertEqual([tuple(r) for r in rows], [
+            ("fallback:iteration:0", 100),
+            ("fallback:iteration:1", 200),
+        ])
+
+    def test_bad_token_field_does_not_block_later_records(self):
+        f = Path(self.tmp.name) / "bad-field.jsonl"
+        bad = _assistant("bad", 10)
+        bad["message"]["usage"]["input_tokens"] = "oops"
+        _w(f, [bad, _assistant("good", 20)])
+
+        self.assertEqual(ingest._ingest_file(self.conn, f, "claude", "gpt-5.5"), 1)
+        self.assertEqual(self._rows(), (1, 20))
+
+    def test_bad_model_type_does_not_block_later_records(self):
+        f = Path(self.tmp.name) / "bad-model.jsonl"
+        bad = _assistant("bad", 10)
+        bad["message"]["model"] = {"bad": "type"}
+        _w(f, [bad, _assistant("good", 20)])
+
+        self.assertEqual(ingest._ingest_file(self.conn, f, "claude", "gpt-5.5"), 1)
+        self.assertEqual(self._rows(), (1, 20))
+
+    def test_overflow_token_field_does_not_block_later_records(self):
+        f = Path(self.tmp.name) / "overflow.jsonl"
+        bad = _assistant("bad", 10)
+        bad["message"]["usage"]["input_tokens"] = float("inf")
+        _w(f, [bad, _assistant("good", 20)])
+
+        self.assertEqual(ingest._ingest_file(self.conn, f, "claude", "gpt-5.5"), 1)
+        self.assertEqual(self._rows(), (1, 20))
+
 
 class TestDbUpserts(unittest.TestCase):
     def setUp(self):
@@ -682,6 +731,81 @@ class TestOpenclawSqliteIngest(unittest.TestCase):
         self.assertEqual(row["total_tokens"], 125)
         self.assertEqual(row["model"], "grok-4.6")
 
+    def test_sqlite_ingest_replaces_matching_old_trajectory_session(self):
+        db.insert_records(
+            self.conn,
+            [
+                UsageRecord(
+                    ts=100,
+                    source="openclaw",
+                    model="grok-4.6",
+                    project="old",
+                    input_tokens=100,
+                    output_tokens=20,
+                    cache_read_tokens=5,
+                    total_tokens=125,
+                    session_id="sid-1",
+                    source_file="/old.trajectory.jsonl",
+                    pos=1,
+                    dedup_key="openclaw:old-run:1",
+                )
+            ],
+        )
+        with patch("tokenstat.config.OPENCLAW_AGENTS_DIR", self.root):
+            self.assertEqual(ingest._ingest_openclaw_sqlite(self.conn), 1)
+        rows = self.conn.execute(
+            "SELECT source_file, total_tokens FROM usage_events ORDER BY dedup_key"
+        ).fetchall()
+        self.assertEqual([tuple(r) for r in rows], [(str(self.db_path), 125)])
+
+    def test_sqlite_partial_session_keeps_old_trajectory(self):
+        db.insert_records(
+            self.conn,
+            [
+                UsageRecord(
+                    ts=100, source="openclaw", model="grok-4.6", project="old",
+                    total_tokens=250, session_id="sid-1", source_file="/old.trajectory.jsonl",
+                    pos=1, dedup_key="openclaw:old-run:1",
+                )
+            ],
+        )
+        with patch("tokenstat.config.OPENCLAW_AGENTS_DIR", self.root):
+            self.assertEqual(ingest._ingest_openclaw_sqlite(self.conn), 0)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) AS c FROM usage_events").fetchone()["c"], 1
+        )
+
+    def test_sqlite_new_records_after_old_prefix_replace_trajectory(self):
+        db.insert_records(
+            self.conn,
+            [
+                UsageRecord(
+                    ts=100, source="openclaw", model="grok-4.6", project="old",
+                    total_tokens=125, session_id="sid-1", source_file="/old.trajectory.jsonl",
+                    pos=1, dedup_key="openclaw:old-run:1",
+                )
+            ],
+        )
+        import sqlite3
+        src = sqlite3.connect(str(self.db_path))
+        src.execute(
+            "INSERT INTO transcript_events VALUES (?,?,?,?)",
+            ("sid-1", 2, json.dumps({
+                "type": "message", "id": "sql-later", "message": {
+                    "role": "assistant", "model": "grok-4.6",
+                    "usage": {"input": 5, "output": 2, "totalTokens": 7},
+                    "timestamp": 1_777_000_001_000,
+                },
+            }), 3),
+        )
+        src.commit()
+        src.close()
+        with patch("tokenstat.config.OPENCLAW_AGENTS_DIR", self.root):
+            self.assertEqual(ingest._ingest_openclaw_sqlite(self.conn), 2)
+        self.assertEqual(
+            self.conn.execute("SELECT SUM(total_tokens) AS t FROM usage_events").fetchone()["t"], 132
+        )
+
 
 class TestHermesIngest(unittest.TestCase):
     def setUp(self):
@@ -837,6 +961,22 @@ class TestGrokIngest(unittest.TestCase):
     def test_missing_log_returns_zero(self):
         with patch("tokenstat.ingest.config.GROK_LOG_PATH", Path(self.tmp.name) / "nope.jsonl"):
             self.assertEqual(ingest._ingest_grok(self.conn), 0)
+
+    def test_bad_usage_field_does_not_block_later_grok_record(self):
+        bad = {
+            "ts": "2026-07-09T10:00:00.000Z", "sid": "s1",
+            "msg": "shell.turn.inference_done",
+            "ctx": {"loop_index": 0, "prompt_tokens": 2**64, "completion_tokens": 1},
+        }
+        good = {
+            "ts": "2026-07-09T10:00:01.000Z", "sid": "s1",
+            "msg": "shell.turn.inference_done",
+            "ctx": {"loop_index": 1, "prompt_tokens": 10, "completion_tokens": 2},
+        }
+        _w(self.log, [bad, good])
+        with patch("tokenstat.ingest.config.GROK_LOG_PATH", self.log):
+            self.assertEqual(ingest._ingest_grok(self.conn), 1)
+        self.assertEqual(self._sum(), (1, 10, 2, 0))
 
 
 if __name__ == "__main__":

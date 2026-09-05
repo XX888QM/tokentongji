@@ -35,7 +35,10 @@ exec /usr/bin/python3 -m tokenstat.server
 EOF
 chmod 755 "$SUPPORT_DIR/start.sh"
 
-# 先停占用 8787 的本服务，再 checkpoint + 拷库，避免 WAL 对半切。
+# 先卸 LaunchAgent，防 KeepAlive 在检查缺库时抢先拉起空账本。
+launchctl bootout "$SERVICE" 2>/dev/null || true
+
+# 再停占用 8787 的手动服务，再 checkpoint + 拷库，避免 WAL 对半切。
 if [[ -f "$APP_DIR/data/tokenstat.pid" ]]; then
   old_pid="$(cat "$APP_DIR/data/tokenstat.pid" 2>/dev/null || true)"
   if [[ -n "${old_pid:-}" ]] && ps -p "$old_pid" >/dev/null 2>&1; then
@@ -57,13 +60,18 @@ fi
 # 存不存在做第二重信号：它只在本脚本成功跑到最后才会被写出，所以"$PLIST_DST
 # 已存在但库不见了"说明这不是首装，很可能是数据丢失，不能悄悄拿旧快照顶上
 # 掩盖过去，得先停下来让人确认。
-if [[ -f "$APP_DIR/data/tokenstat.db" && ! -f "$SUPPORT_DIR/data/tokenstat.db" ]]; then
+if [[ ! -f "$SUPPORT_DIR/data/tokenstat.db" ]]; then
   if [[ -f "$PLIST_DST" && "$FORCE_RESEED" != true ]]; then
     echo "警告：LaunchAgent 之前已装过（$PLIST_DST 存在），但运行库 $SUPPORT_DIR/data/tokenstat.db 不见了。" >&2
     echo "这不是首装，运行副本的库大概率是被误删/异常丢失，不是从没装过。" >&2
     echo "为避免用仓库里可能是几个月前的旧快照悄悄覆盖、掩盖数据丢失，这里停止执行。" >&2
     echo "重建前建议先看看 $SUPPORT_DIR/data/backups/ 里有没有更新的备份可以手动恢复。" >&2
     echo "确认要用仓库 data/tokenstat.db 当种子重建，请带上 --force-reseed 重跑本脚本。" >&2
+    exit 1
+  fi
+  if [[ ! -f "$APP_DIR/data/tokenstat.db" ]]; then
+    echo "错误：运行库和仓库种子库都不存在，拒绝启动空账本。" >&2
+    echo "请先从 $SUPPORT_DIR/data/backups/ 恢复数据库后再运行。" >&2
     exit 1
   fi
   sqlite3 "$APP_DIR/data/tokenstat.db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 || true
@@ -74,13 +82,12 @@ if [[ -f "$APP_DIR/data/tokenstat.db" && ! -f "$SUPPORT_DIR/data/tokenstat.db" ]
   else
     echo "首装：已用仓库 data/tokenstat.db 作为运行副本的初始库。"
   fi
-elif [[ -f "$SUPPORT_DIR/data/tokenstat.db" ]]; then
+else
   echo "运行副本已有库，保留不覆盖：$SUPPORT_DIR/data/tokenstat.db"
 fi
 
 sed -e "s|__SUPPORT_DIR__|$SUPPORT_DIR|g" -e "s|__HOME__|$HOME|g" "$TEMPLATE" > "$PLIST_DST"
 
-launchctl bootout "$SERVICE" 2>/dev/null || true
 launchctl bootstrap "gui/${USER_ID}" "$PLIST_DST"
 launchctl kickstart -k "$SERVICE"
 launchctl print "$SERVICE" >/dev/null

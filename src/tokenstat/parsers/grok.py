@@ -58,7 +58,7 @@ class GrokState:
 def _int(v: Any) -> int:
     try:
         n = int(v or 0)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return 0
     return n if n >= 0 else 0
 

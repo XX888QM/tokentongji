@@ -125,16 +125,19 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
                     obj = json.loads(raw)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                if source == SOURCE_CLAUDE:
-                    parsed = claude_parser.parse_records(obj, source_file, line_start)
-                    if len(parsed) > 1:
-                        legacy_claude_keys.add(obj["message"]["id"])
-                    recs.extend(parsed)
+                try:
+                    if source == SOURCE_CLAUDE:
+                        parsed = claude_parser.parse_records(obj, source_file, line_start)
+                        if len(parsed) > 1:
+                            legacy_claude_keys.add(obj["message"]["id"])
+                        recs.extend(parsed)
+                        continue
+                    if source == SOURCE_CODEX:
+                        rec = codex_parser.process_record(obj, source_file, line_start, cstate)
+                    else:
+                        rec = openclaw_parser.parse_record(obj, source_file, line_start)
+                except (AttributeError, OverflowError, TypeError, ValueError):
                     continue
-                elif source == SOURCE_CODEX:
-                    rec = codex_parser.process_record(obj, source_file, line_start, cstate)
-                else:
-                    rec = openclaw_parser.parse_record(obj, source_file, line_start)
                 if rec is not None:
                     recs.append(rec)
     except OSError:
@@ -148,6 +151,12 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
         # 已删、新行未写"的短暂空窗，该消息的用量会短暂从统计里消失（下一轮
         # ingest 会重新处理同一行补齐，只是重启前有个偏低的窗口）。
         db.delete_dedup_keys(conn, SOURCE_CLAUDE, legacy_claude_keys, commit=False)
+    if source == SOURCE_CLAUDE:
+        # 旧副本可能在 fallback 明细之后才被扫描；base key 不冲突却会重复计数。
+        recs = [
+            r for r in recs
+            if ":iteration:" in r.dedup_key or not db.has_claude_iterations(conn, r.dedup_key)
+        ]
     if recs:
         on_conflict = "max" if source == SOURCE_CLAUDE else "ignore"
         added += db.insert_records(conn, recs, on_conflict=on_conflict, commit=False)
@@ -246,16 +255,19 @@ def _ingest_grok(conn, path=None, observer: bool = False) -> int:
                     obj = json.loads(raw)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                rec = grok_parser.process_record(obj, source_file, line_start, gstate)
-                if rec is not None:
-                    if observer:
-                        rec = replace(
-                            rec,
-                            project="claude-mem",
-                            category=CATEGORY_OBSERVER,
-                            dedup_key=f"claude-mem-grok:{rec.dedup_key}",
-                        )
-                    recs.append(rec)
+                try:
+                    rec = grok_parser.process_record(obj, source_file, line_start, gstate)
+                    if rec is not None:
+                        if observer:
+                            rec = replace(
+                                rec,
+                                project="claude-mem",
+                                category=CATEGORY_OBSERVER,
+                                dedup_key=f"claude-mem-grok:{rec.dedup_key}",
+                            )
+                        recs.append(rec)
+                except (AttributeError, OverflowError, TypeError, ValueError):
+                    continue
     except OSError:
         return 0
 
@@ -309,7 +321,10 @@ def _ingest_openclaw_v3_file(conn, path: Path) -> int:
                     obj = json.loads(raw)
                 except (json.JSONDecodeError, ValueError):
                     continue
-                rec = openclaw_parser.parse_v3_record(obj, source_file, line_start, ctx)
+                try:
+                    rec = openclaw_parser.parse_v3_record(obj, source_file, line_start, ctx)
+                except (AttributeError, OverflowError, TypeError, ValueError):
+                    continue
                 if rec is not None:
                     recs.append(rec)
     except OSError:
@@ -335,8 +350,35 @@ def _ingest_openclaw_sqlite(conn) -> int:
         try:
             records = openclaw_parser.fetch_records(path)
             if records:
-                added += db.insert_records(conn, records, on_conflict="ignore")
-        except (OSError, sqlite3.Error, TypeError, ValueError, AttributeError, UnicodeDecodeError):
+                session_records = {}
+                seen_keys = set()
+                for record in records:
+                    if record.session_id and record.dedup_key not in seen_keys:
+                        seen_keys.add(record.dedup_key)
+                        session_records.setdefault(record.session_id, []).append(record)
+                trajectory_totals = db.openclaw_trajectory_totals(conn, session_records)
+                covered_sessions = set()
+                for session_id, old_total in trajectory_totals.items():
+                    running_total = 0
+                    for record in session_records.get(session_id, []):
+                        running_total += record.total_tokens
+                        if running_total == old_total:
+                            covered_sessions.add(session_id)
+                            break
+                blocked_sessions = set(trajectory_totals) - covered_sessions
+                records = [record for record in records if record.session_id not in blocked_sessions]
+                if not records:
+                    continue
+                try:
+                    db.delete_openclaw_trajectory_sessions(
+                        conn, covered_sessions, commit=False
+                    )
+                    added += db.insert_records(conn, records, on_conflict="ignore", commit=False)
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+        except (OSError, sqlite3.Error, OverflowError, TypeError, ValueError, AttributeError, UnicodeDecodeError):
             continue
     return added
 

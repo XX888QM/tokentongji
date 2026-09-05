@@ -36,6 +36,19 @@ class TestUsageRecord(unittest.TestCase):
                 ts=1, source="codex", model="gpt-5.4", project="/x", request_prompt_tokens=-1
             )
 
+    def test_sqlite_unsafe_values_rejected(self):
+        with self.assertRaises(ValueError):
+            UsageRecord(ts=1, source="claude", model={"bad": "type"}, project="/x")
+        with self.assertRaises(ValueError):
+            UsageRecord(ts=1, source="claude", model="m", project="/x", input_tokens=2**64)
+        with self.assertRaises(ValueError):
+            UsageRecord(ts=253402300799, source="claude", model="m", project="/x")
+
+    def test_dedup_key_is_not_truncated(self):
+        key = "a" * 512 + ":iteration:1"
+        r = UsageRecord(ts=1, source="claude", model="m", project="/x", dedup_key=key)
+        self.assertEqual(r.dedup_key, key)
+
     def test_overlong_strings_truncated(self):
         # 损坏/伪造日志塞超长字符串时应被截断，防撑大 SQLite
         r = UsageRecord(ts=1, source="claude", model="m" * 5000,

@@ -85,6 +85,13 @@ _CONTENT_TYPES = {
 }
 
 
+def _safe_csv_text(value: object) -> object:
+    """让表格软件把来自日志的文本当文本，而不是公式。"""
+    if isinstance(value, str) and value.lstrip(" \t\r\n")[:1] in ("=", "+", "-", "@"):
+        return "'" + value
+    return value
+
+
 def _now_local_str() -> str:
     return datetime.now(tz=_LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -219,6 +226,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):  # noqa: N802
+        if not self._require_local_host():
+            return
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
@@ -265,6 +274,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "internal server error"}, status=500)
 
     def do_POST(self):  # noqa: N802
+        if not self._require_local_host():
+            return
         parsed = urlparse(self.path)
         try:
             if parsed.path not in ("/api/notify", "/api/ingest", "/api/backup"):
@@ -441,7 +452,8 @@ class Handler(BaseHTTPRequestHandler):
         writer.writerow(["period", "source", "collector", "model", "project", "input_tokens", "output_tokens",
                          "cache_read_tokens", "cache_creation_tokens", "total_tokens", "cost_usd"])
         for row in rows:
-            writer.writerow([period, row["source"], row["collector"] or "", row["model"], row["project"], row["input"], row["output"],
+            writer.writerow([period, _safe_csv_text(row["source"]), _safe_csv_text(row["collector"] or ""),
+                             _safe_csv_text(row["model"]), _safe_csv_text(row["project"]), row["input"], row["output"],
                              row["cache_read"], row["cache_creation"], row["total"], row["cost_usd"]])
         body = ("\ufeff" + output.getvalue()).encode("utf-8")
         self.send_response(200)
@@ -458,6 +470,19 @@ class Handler(BaseHTTPRequestHandler):
             return False
         if self.headers.get("X-Tokenstat-Action") != action:
             self._send_json({"ok": False, "error": "missing action header"}, status=403)
+            return False
+        return True
+
+    def _require_local_host(self) -> bool:
+        allowed = {
+            f"127.0.0.1:{config.PORT}",
+            f"localhost:{config.PORT}",
+            f"[::1]:{config.PORT}",
+        }
+        if config.PORT == 80:
+            allowed.update({"127.0.0.1", "localhost", "[::1]"})
+        if self.headers.get("Host", "").lower() not in allowed:
+            self._send_json({"ok": False, "error": "invalid host"}, status=403)
             return False
         return True
 
