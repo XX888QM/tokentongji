@@ -36,7 +36,7 @@ PYTHONPATH=src python3 -m unittest tests.test_pricing.TestNormalization.test_son
 
 数据流：6 个独立数据源 → 各自 parser 归一化成 `UsageRecord` → SQLite `usage_events` 表去重入库 → `aggregate.py` 按需查询聚合 → `server.py` 暴露 JSON API → `static/` 纯 JS 前端轮询渲染。
 
-- **`config.py`** — 唯一配置入口，路径/端口/间隔均可用环境变量覆盖；所有整数配置须为正数。不要在别处硬编码路径。Grok 日志路径可用 `TOKENSTAT_GROK_LOG`，claude-mem Codex usage spool 路径可用 `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR`，claude-mem Grok observer 日志可用 `TOKENSTAT_CLAUDE_MEM_GROK_LOG`，OpenClaw agent 根目录可用 `TOKENSTAT_OPENCLAW_AGENTS_DIR`。
+- **`config.py`** — 唯一配置入口，路径/端口/间隔均可用环境变量覆盖；所有整数配置须为正数。不要在别处硬编码路径。Grok 日志路径可用 `TOKENSTAT_GROK_LOG`，claude-mem Codex usage spool 路径可用 `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR`（兼容旧名 `TOKENSTAT_CLAUDE_MEM_USAGE_DIR`），claude-mem Grok observer 日志可用 `TOKENSTAT_CLAUDE_MEM_GROK_LOG`，OpenClaw agent 根目录可用 `TOKENSTAT_OPENCLAW_AGENTS_DIR`，sessions 目录可用 `TOKENSTAT_OPENCLAW_SESSION_DIR`。HOST 空串或 `0.0.0.0` 回落到 `127.0.0.1`。
 - **`models.py`** — `UsageRecord`（frozen dataclass）是六来源统一的中间表示，下游（db/aggregate）只认这一种结构，不感知来源差异。所有 token 字段都是"本条增量"，可直接逐条求和，不会重复计数；`request_prompt_tokens` 仅在原始日志能确认一次完整 prompt（含缓存）时保存，供长上下文价判档，不能拿 Codex 累计差分猜。
 - **`parsers/{claude,codex,opencode,openclaw,hermes,grok}.py`** — 每来源一个模块，各自的去重键/差分逻辑是 recon 实测出来的坑（细节见各文件顶部 docstring），改动前务必先读：
   - Claude：普通消息用 `dedup_key = message.id`；同一 message 的流式重复行整体采用 total 更大的完整快照。fallback/retry 的 `usage.iterations` 必须拆成真实模型各一条，键统一为 `message.id:iteration:N`；看到 iterations 时删除此前的临时顶层 `message.id` 行，不能只读顶层 usage。

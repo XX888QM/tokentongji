@@ -585,7 +585,7 @@ class TestStaleSourceDetection(unittest.TestCase):
         hermes = next(source for source in a["sources"] if source["source"] == "hermes")
         self.assertEqual(hermes["last_date"], "2026-06-06")
         self.assertEqual(hermes["activity_last_date"], "2026-06-20")
-        self.assertNotIn("hermes 已", " ".join(i["message"] for i in a["issues"]))
+        self.assertIn("hermes 已 14 天无新数据", " ".join(i["message"] for i in a["issues"]))
 
     def test_all_sources_stale_against_today_warns(self):
         conn = db.get_conn(":memory:")

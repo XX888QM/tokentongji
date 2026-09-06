@@ -52,7 +52,10 @@ console.log(JSON.stringify({
         rendered = json.loads(self._run_js(check))
         self.assertEqual(rendered["labels"], ["Codex", "claude-mem"])
         self.assertEqual(rendered["display"], "1243.85万")
-        self.assertEqual(rendered["badge"], '<span class="badge claude-mem">claude-mem</span>')
+        self.assertEqual(
+            rendered["badge"],
+            '<span class="badge claude_mem" data-source="claude_mem">claude-mem</span>',
+        )
         self.assertIn('1243.85万', rendered["hero"])
         self.assertNotIn('split-row claude-mem', rendered["hero"])
         self.assertIn('title="12,438,516 tokens"', rendered["hero"])
@@ -143,14 +146,28 @@ const data = (id) => ({ session_id:id, summary:{}, groups:[], source_files:[] })
 
     def test_header_health_reflects_audit_status(self):
         check = """
-const live = { textContent:'', className:'' };
+const live = { textContent:'', className:'', style:{} };
 global.document = { getElementById(id) { return id === 'liveStatus' ? live : {}; } };
 setHeaderHealth('warn');
-console.log(JSON.stringify(live));
+console.log(JSON.stringify({textContent: live.textContent, className: live.className, cursor: live.style.cursor}));
 """
         self.assertEqual(
             json.loads(self._run_js(check)),
-            {"textContent": "需关注", "className": "live warn"},
+            {"textContent": "需关注", "className": "live warn", "cursor": "pointer"},
+        )
+
+    def test_source_filter_uses_display_source_not_physical_source(self):
+        check = """
+sourceFilter = 'codex';
+console.log(JSON.stringify({
+  keep: matchesSourceFilter({ source: 'codex', collector: null }),
+  dropMem: matchesSourceFilter({ source: 'codex', collector: 'claude-mem' }),
+  keepMem: (sourceFilter = 'claude_mem') && matchesSourceFilter({ source: 'codex', collector: 'claude-mem' }),
+}));
+"""
+        self.assertEqual(
+            json.loads(self._run_js(check)),
+            {"keep": True, "dropMem": False, "keepMem": True},
         )
 
     def test_chart_is_line_only(self):

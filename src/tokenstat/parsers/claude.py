@@ -31,6 +31,22 @@ _OBSERVER_MARK = "/.claude-mem/observer-sessions"
 _SUBAGENT_MARK = "/subagents/workflows/"
 
 
+def _cache_creation_split(usage: dict) -> tuple[int, int]:
+    """拆 5m / 1h 缓存写入。缺细分时整段落进 5m，兼容旧日志。"""
+    total = int(usage.get("cache_creation_input_tokens", 0) or 0)
+    detail = usage.get("cache_creation")
+    one_h = 0
+    five_m = 0
+    if isinstance(detail, dict):
+        one_h = int(detail.get("ephemeral_1h_input_tokens", 0) or 0)
+        five_m = int(detail.get("ephemeral_5m_input_tokens", 0) or 0)
+    if one_h <= 0 and five_m <= 0:
+        return total, 0
+    if five_m <= 0:
+        five_m = max(0, total - one_h)
+    return five_m, max(0, one_h)
+
+
 def _category(cwd: str, is_sidechain: bool, source_file: str) -> str:
     if cwd and _OBSERVER_MARK in cwd:
         return CATEGORY_OBSERVER
@@ -63,9 +79,9 @@ def parse_record(obj: dict, source_file: str, pos: int) -> Optional[UsageRecord]
 
     input_tokens = int(usage.get("input_tokens", 0) or 0)
     output_tokens = int(usage.get("output_tokens", 0) or 0)
-    cache_creation = int(usage.get("cache_creation_input_tokens", 0) or 0)
+    cache_creation, cache_creation_1h = _cache_creation_split(usage)
     cache_read = int(usage.get("cache_read_input_tokens", 0) or 0)
-    total = input_tokens + output_tokens + cache_creation + cache_read
+    total = input_tokens + output_tokens + cache_creation + cache_creation_1h + cache_read
 
     cwd = obj.get("cwd") or "unknown"
     is_sidechain = bool(obj.get("isSidechain", False))
@@ -84,6 +100,7 @@ def parse_record(obj: dict, source_file: str, pos: int) -> Optional[UsageRecord]
         output_tokens=output_tokens,
         cache_read_tokens=cache_read,
         cache_creation_tokens=cache_creation,
+        cache_creation_1h_tokens=cache_creation_1h,
         reasoning_tokens=0,
         total_tokens=total,
         session_id=session_id,
@@ -110,7 +127,7 @@ def parse_records(obj: dict, source_file: str, pos: int) -> list[UsageRecord]:
             continue
         input_tokens = int(item.get("input_tokens", 0) or 0)
         output_tokens = int(item.get("output_tokens", 0) or 0)
-        cache_creation = int(item.get("cache_creation_input_tokens", 0) or 0)
+        cache_creation, cache_creation_1h = _cache_creation_split(item)
         cache_read = int(item.get("cache_read_input_tokens", 0) or 0)
         records.append(replace(
             base,
@@ -118,8 +135,9 @@ def parse_records(obj: dict, source_file: str, pos: int) -> list[UsageRecord]:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cache_creation_tokens=cache_creation,
+            cache_creation_1h_tokens=cache_creation_1h,
             cache_read_tokens=cache_read,
-            total_tokens=input_tokens + output_tokens + cache_creation + cache_read,
+            total_tokens=input_tokens + output_tokens + cache_creation + cache_creation_1h + cache_read,
             dedup_key=f"{base.dedup_key}:iteration:{index}",
         ))
     return records or [base]

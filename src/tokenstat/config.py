@@ -31,18 +31,22 @@ CODEX_SESSION_DIRS = (
 # claude-mem 的 Codex observer 使用 `codex exec --ephemeral`，不会生成上面的
 # session JSONL；它会把 CLI 返回的真实 usage 单独落到这个小型 JSONL spool。
 CLAUDE_MEM_CODEX_USAGE_DIR = Path(
-    os.environ.get(
-        "TOKENSTAT_CLAUDE_MEM_USAGE_DIR",
-        str(HOME / ".claude-mem" / "usage"),
-    )
+    os.environ.get("TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR")
+    or os.environ.get("TOKENSTAT_CLAUDE_MEM_USAGE_DIR")
+    or str(HOME / ".claude-mem" / "usage")
 )
 OPENCODE_DB_PATH = HOME / ".local" / "share" / "opencode" / "opencode.db"
-OPENCLAW_SESSION_DIR = HOME / ".openclaw" / "agents" / "main" / "sessions"
 # OpenClaw 2026-09 起把 session 迁进各 agent 的 sqlite；jsonl 目录可能清空。
 OPENCLAW_AGENTS_DIR = Path(
     os.environ.get(
         "TOKENSTAT_OPENCLAW_AGENTS_DIR",
         str(HOME / ".openclaw" / "agents"),
+    )
+)
+OPENCLAW_SESSION_DIR = Path(
+    os.environ.get(
+        "TOKENSTAT_OPENCLAW_SESSION_DIR",
+        str(OPENCLAW_AGENTS_DIR / "main" / "sessions"),
     )
 )
 HERMES_STATE_DB = HOME / ".hermes" / "state.db"
@@ -66,7 +70,13 @@ DATA_DIR = Path(os.environ.get("TOKENSTAT_DATA_DIR", str(_DEFAULT_DATA_DIR)))
 DB_PATH = DATA_DIR / "tokenstat.db"
 
 # ---- Web 服务 ----
-HOST = os.environ.get("TOKENSTAT_HOST", "127.0.0.1")
+def resolve_host(raw: str | None) -> str:
+    """空串 / 0.0.0.0 / :: 一律回落到本机回环，避免误绑到所有网卡。"""
+    value = (raw or "127.0.0.1").strip()
+    return "127.0.0.1" if value in ("", "0.0.0.0", "::") else value
+
+
+HOST = resolve_host(os.environ.get("TOKENSTAT_HOST"))
 PORT = _env_int("TOKENSTAT_PORT", 8787)
 
 # ---- 后台 ingest ----

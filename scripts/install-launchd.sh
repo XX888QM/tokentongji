@@ -55,12 +55,23 @@ fi
 # 运行副本一旦建立，它才是唯一真值：桌面 data/ 那份是旧快照，
 # 无条件 cp 会把自启进程后来采集到的历史整段抹掉（不可逆）。
 #
+db_has_events() {
+  local db="$1"
+  [[ -f "$db" ]] || return 1
+  local size
+  size="$(stat -f%z "$db" 2>/dev/null || echo 0)"
+  [[ "${size:-0}" -ge 100 ]] || return 1
+  local n
+  n="$(sqlite3 "$db" "SELECT COUNT(*) FROM usage_events;" 2>/dev/null || echo 0)"
+  [[ "${n:-0}" -gt 0 ]]
+}
+
 # "首装"判断不能只看运行副本有没有库文件——那分不清"从没装过"和"已经跑了
 # 很久、库因异常退出/误删/磁盘问题不见了但目录还在"这两种情况。用 $PLIST_DST
 # 存不存在做第二重信号：它只在本脚本成功跑到最后才会被写出，所以"$PLIST_DST
 # 已存在但库不见了"说明这不是首装，很可能是数据丢失，不能悄悄拿旧快照顶上
-# 掩盖过去，得先停下来让人确认。
-if [[ ! -f "$SUPPORT_DIR/data/tokenstat.db" ]]; then
+# 掩盖过去，得先停下来让人确认。0 字节 / 0 事件也按缺库处理。
+if ! db_has_events "$SUPPORT_DIR/data/tokenstat.db"; then
   if [[ -f "$PLIST_DST" && "$FORCE_RESEED" != true ]]; then
     echo "警告：LaunchAgent 之前已装过（$PLIST_DST 存在），但运行库 $SUPPORT_DIR/data/tokenstat.db 不见了。" >&2
     echo "这不是首装，运行副本的库大概率是被误删/异常丢失，不是从没装过。" >&2
@@ -69,18 +80,25 @@ if [[ ! -f "$SUPPORT_DIR/data/tokenstat.db" ]]; then
     echo "确认要用仓库 data/tokenstat.db 当种子重建，请带上 --force-reseed 重跑本脚本。" >&2
     exit 1
   fi
-  if [[ ! -f "$APP_DIR/data/tokenstat.db" ]]; then
-    echo "错误：运行库和仓库种子库都不存在，拒绝启动空账本。" >&2
+  seed=""
+  latest_backup="$(ls -t "$SUPPORT_DIR/data/backups"/tokenstat-*.db 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${latest_backup:-}" ]]; then
+    seed="$latest_backup"
+  elif [[ -f "$APP_DIR/data/tokenstat.db" ]]; then
+    seed="$APP_DIR/data/tokenstat.db"
+  fi
+  if [[ -z "$seed" ]]; then
+    echo "错误：运行库、备份和仓库种子库都不存在，拒绝启动空账本。" >&2
     echo "请先从 $SUPPORT_DIR/data/backups/ 恢复数据库后再运行。" >&2
     exit 1
   fi
-  sqlite3 "$APP_DIR/data/tokenstat.db" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 || true
-  cp "$APP_DIR/data/tokenstat.db" "$SUPPORT_DIR/data/tokenstat.db"
+  sqlite3 "$seed" "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null 2>&1 || true
+  cp "$seed" "$SUPPORT_DIR/data/tokenstat.db"
   rm -f "$SUPPORT_DIR/data/tokenstat.db-wal" "$SUPPORT_DIR/data/tokenstat.db-shm"
   if [[ -f "$PLIST_DST" ]]; then
-    echo "已用 --force-reseed 确认：用仓库 data/tokenstat.db 重建了运行副本的库。"
+    echo "已用 --force-reseed 确认：用 $seed 重建了运行副本的库。"
   else
-    echo "首装：已用仓库 data/tokenstat.db 作为运行副本的初始库。"
+    echo "首装：已用 $seed 作为运行副本的初始库。"
   fi
 else
   echo "运行副本已有库，保留不覆盖：$SUPPORT_DIR/data/tokenstat.db"

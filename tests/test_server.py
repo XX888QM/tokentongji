@@ -15,7 +15,12 @@ from tokenstat.models import UsageRecord
 from tokenstat.server import Handler
 
 
-def _call_get(path: str, db_path: str, headers: Optional[dict] = None) -> tuple[int, dict]:
+def _call_get(
+    path: str,
+    db_path: str,
+    headers: Optional[dict] = None,
+    client_host: str = "127.0.0.1",
+) -> tuple[int, dict]:
     """模拟一次 GET 请求，返回 (status_code, response_body)。"""
     response_code = [None]
     response_body = io.BytesIO()
@@ -26,6 +31,7 @@ def _call_get(path: str, db_path: str, headers: Optional[dict] = None) -> tuple[
 
         handler.path = path
         handler.headers = {"Host": f"127.0.0.1:{config.PORT}", **(headers or {})}
+        handler.client_address = (client_host, 12345)
         handler.wfile = response_body
         handler.send_response = lambda code, msg=None: response_code.__setitem__(0, code)
         handler.send_header = lambda k, v: None
@@ -38,7 +44,12 @@ def _call_get(path: str, db_path: str, headers: Optional[dict] = None) -> tuple[
     return response_code[0], body
 
 
-def _call_get_bytes(path: str, db_path: str, headers: Optional[dict] = None) -> tuple[int, bytes]:
+def _call_get_bytes(
+    path: str,
+    db_path: str,
+    headers: Optional[dict] = None,
+    client_host: str = "127.0.0.1",
+) -> tuple[int, bytes]:
     """模拟一次非 JSON GET（CSV 导出）。"""
     response_code = [None]
     response_body = io.BytesIO()
@@ -47,6 +58,7 @@ def _call_get_bytes(path: str, db_path: str, headers: Optional[dict] = None) -> 
             handler = Handler.__new__(Handler)
         handler.path = path
         handler.headers = {"Host": f"127.0.0.1:{config.PORT}", **(headers or {})}
+        handler.client_address = (client_host, 12345)
         handler.wfile = response_body
         handler.send_response = lambda code, msg=None: response_code.__setitem__(0, code)
         handler.send_header = lambda k, v: None
@@ -154,7 +166,7 @@ class TestDailyEndpointFallback(unittest.TestCase):
         self.assertEqual(code, 200)
         hermes = next(source for source in body["sources"] if source["source"] == "hermes")
         self.assertEqual(hermes["activity_last_date"], today.isoformat())
-        self.assertNotIn("hermes 已", " ".join(i["message"] for i in body["issues"]))
+        self.assertIn("hermes 已", " ".join(i["message"] for i in body["issues"]))
         self.assertEqual(audit_code, 200)
         audit_hermes = next(source for source in audit["sources"] if source["source"] == "hermes")
         self.assertEqual(audit_hermes["collection"]["state"], "active")
@@ -220,9 +232,9 @@ class TestDailyEndpointFallback(unittest.TestCase):
             conn.close()
         code, body = _call_get_bytes("/api/export?period=today", self._db_path)
         self.assertEqual(code, 200)
-        self.assertIn(b"source,collector,model,project", body)
-        self.assertIn(b"codex,,gpt-5.5,/tmp/proj", body)
-        self.assertIn(b"codex,claude-mem,gpt-5.6-luna,/tmp/claude-mem", body)
+        self.assertIn(b"source,display_source,collector,model,project", body)
+        self.assertIn(b"codex,codex,,gpt-5.5,/tmp/proj", body)
+        self.assertIn(b"codex,claude_mem,claude-mem,gpt-5.6-luna,/tmp/claude-mem", body)
 
     def test_export_escapes_formula_like_text(self):
         conn = db.get_conn(self._db_path)
@@ -245,6 +257,11 @@ class TestDailyEndpointFallback(unittest.TestCase):
         )
         self.assertEqual(code, 403)
         self.assertEqual(body["error"], "invalid host")
+
+    def test_rejects_remote_client_before_reading_api(self):
+        code, body = _call_get("/api/summary", self._db_path, client_host="8.8.8.8")
+        self.assertEqual(code, 403)
+        self.assertEqual(body["error"], "local requests only")
 
     def test_rejects_untrusted_host_before_action(self):
         code, body = _call_post(
@@ -549,9 +566,52 @@ class TestIngestToApi(unittest.TestCase):
             {(row["collector"], row["total"]) for row in breakdown["by_model"]},
             {(None, 1000), ("claude-mem", 120), ("claude-mem", 1000)},
         )
-        self.assertIn(b"codex,,gpt-5.6-luna,/tmp/direct", exported)
-        self.assertIn(b"codex,claude-mem,gpt-5.6-luna,/tmp/claude-mem", exported)
-        self.assertIn(b"grok,claude-mem,grok-4.6,claude-mem", exported)
+        self.assertIn(b"codex,codex,,gpt-5.6-luna,/tmp/direct", exported)
+        self.assertIn(b"codex,claude_mem,claude-mem,gpt-5.6-luna,/tmp/claude-mem", exported)
+        self.assertIn(b"grok,claude_mem,claude-mem,grok-4.6,claude-mem", exported)
+
+
+class TestEnsureUsableDb(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.data = self.root / "data"
+        self.data.mkdir()
+        (self.data / "backups").mkdir()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_restores_latest_backup_when_live_db_empty(self):
+        live = self.data / "tokenstat.db"
+        backup = self.data / "backups" / "tokenstat-20260906-120000-000000.db"
+        conn = db.get_conn(backup)
+        db.init_db(conn)
+        db.insert_records(conn, [
+            UsageRecord(ts=1, source="codex", model="gpt-5.5", project="/p",
+                        total_tokens=9, dedup_key="seed"),
+        ])
+        conn.close()
+        live.write_bytes(b"")
+        with patch("tokenstat.server.config.DATA_DIR", self.data):
+            with patch("tokenstat.server.config.DB_PATH", live):
+                self.assertTrue(server._ensure_usable_db())
+        check = db.get_conn(live)
+        try:
+            n = check.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0]
+        finally:
+            check.close()
+        self.assertEqual(n, 1)
+
+    def test_refuses_empty_ledger_when_launch_agent_exists(self):
+        live = self.data / "tokenstat.db"
+        agents = self.root / "Library" / "LaunchAgents"
+        agents.mkdir(parents=True)
+        (agents / "com.yunxin.tokenstat.plist").write_text("x")
+        with patch("tokenstat.server.config.DATA_DIR", self.data):
+            with patch("tokenstat.server.config.DB_PATH", live):
+                with patch("tokenstat.server.Path.home", return_value=self.root):
+                    self.assertFalse(server._ensure_usable_db())
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sqlite3
@@ -28,6 +29,7 @@ from .parsers import hermes as hermes_parser
 from .parsers import grok as grok_parser
 
 MAX_LINE_BYTES = 50 * 1024 * 1024
+_HEAD_SIG_BYTES = 256
 
 
 def claude_files() -> Iterator[Path]:
@@ -84,6 +86,23 @@ def _should_read(state: dict | None, inode: int, size: int, mtime: float):
     return state["offset"], False
 
 
+def _file_head_sig(path: Path) -> str:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(_HEAD_SIG_BYTES).hex()
+    except OSError:
+        return ""
+
+
+def _head_rewritten(state: dict | None, path: Path) -> bool:
+    if not state:
+        return False
+    prev = (state.get("ctx") or {}).get("_head_sig")
+    if not prev:
+        return False
+    return prev != _file_head_sig(path)
+
+
 def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
     """增量解析单个文件，返回新增或更新记录数。"""
     try:
@@ -93,9 +112,11 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
     source_file = str(path)
     state = db.get_ingest_state(conn, source_file)
     start_offset, reset_ctx = _should_read(state, st.st_ino, st.st_size, st.st_mtime)
+    if _head_rewritten(state, path):
+        start_offset, reset_ctx = 0, True
 
     # 无新增则快速跳过
-    if state is not None and start_offset == state["offset"] and st.st_size == state["offset"]:
+    if state is not None and start_offset == state["offset"] and st.st_size == state["offset"] and not reset_ctx:
         return 0
 
     ctx = {} if reset_ctx else (state["ctx"] if state else {})
@@ -164,6 +185,7 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
         conn.commit()
 
     new_ctx = cstate.to_ctx() if cstate is not None else {}
+    new_ctx["_head_sig"] = _file_head_sig(path)
     db.set_ingest_state(
         conn,
         source_file,
@@ -229,11 +251,18 @@ def _ingest_grok(conn, path=None, observer: bool = False) -> int:
     source_file = str(path)
     state = db.get_ingest_state(conn, source_file)
     start_offset, reset_ctx = _should_read(state, st.st_ino, st.st_size, st.st_mtime)
+    old_ctx = (state["ctx"] or {}) if state else {}
+    if _head_rewritten(state, path):
+        start_offset, reset_ctx = 0, True
 
-    if state is not None and start_offset == state["offset"] and st.st_size == state["offset"]:
+    if state is not None and start_offset == state["offset"] and st.st_size == state["offset"] and not reset_ctx:
         return 0
 
-    ctx = {} if reset_ctx else ((state["ctx"] or {}) if state else {})
+    # inode/截断重置 offset，但 sid→model/cwd 字典要留下，否则 Grok 默默掉 unknown
+    if reset_ctx:
+        ctx = {"models": old_ctx.get("models") or {}, "cwds": old_ctx.get("cwds") or {}}
+    else:
+        ctx = old_ctx
     gstate = grok_parser.GrokState.from_ctx(ctx)
 
     recs = []
@@ -275,6 +304,8 @@ def _ingest_grok(conn, path=None, observer: bool = False) -> int:
     if recs:
         added = db.insert_records(conn, recs, on_conflict="ignore")
 
+    grok_ctx = gstate.to_ctx()
+    grok_ctx["_head_sig"] = _file_head_sig(path)
     db.set_ingest_state(
         conn,
         source_file,
@@ -282,7 +313,7 @@ def _ingest_grok(conn, path=None, observer: bool = False) -> int:
         offset=consumed,
         size=st.st_size,
         mtime=st.st_mtime,
-        ctx=gstate.to_ctx(),
+        ctx=grok_ctx,
     )
     return added
 
@@ -296,8 +327,10 @@ def _ingest_openclaw_v3_file(conn, path: Path) -> int:
     source_file = str(path)
     state = db.get_ingest_state(conn, source_file)
     start_offset, reset_ctx = _should_read(state, st.st_ino, st.st_size, st.st_mtime)
+    if _head_rewritten(state, path):
+        start_offset, reset_ctx = 0, True
 
-    if state is not None and start_offset == state["offset"] and st.st_size == state["offset"]:
+    if state is not None and start_offset == state["offset"] and st.st_size == state["offset"] and not reset_ctx:
         return 0
 
     ctx = {} if reset_ctx else ((state["ctx"] or {}) if state else {})
@@ -334,6 +367,7 @@ def _ingest_openclaw_v3_file(conn, path: Path) -> int:
     if recs:
         added += db.insert_records(conn, recs, on_conflict="ignore")
 
+    ctx["_head_sig"] = _file_head_sig(path)
     db.set_ingest_state(
         conn, source_file,
         inode=st.st_ino, offset=consumed,
@@ -383,56 +417,138 @@ def _ingest_openclaw_sqlite(conn) -> int:
     return added
 
 
-def run_once() -> dict:
+def _is_codex_fork_file(path: Path) -> bool:
+    """任一 session_meta 带 forked_from_id 就要清 replay。父/子 meta 会交错，不能只看第一条。"""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if "forked_from_id" not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(obj, dict) or obj.get("type") != "session_meta":
+                    continue
+                payload = obj.get("payload")
+                if isinstance(payload, dict) and payload.get("forked_from_id"):
+                    return True
+    except OSError:
+        return False
+    return False
+
+
+def reset_codex_fork_sessions(conn) -> dict:
+    """删掉 fork session 的 usage_events + ingest_state，让新 parser 重扫。
+
+    只动磁盘上仍能看到 forked_from_id 的文件；已删源文件的历史行无法复核，不动。
+    """
+    names = []
+    seen = set()
+    for path in codex_files():
+        if path.name in seen:
+            continue
+        if not _is_codex_fork_file(path):
+            continue
+        seen.add(path.name)
+        names.append(path.name)
+    deleted = 0
+    for name in names:
+        cur = conn.execute(
+            "DELETE FROM usage_events WHERE source = ? AND ("
+            "source_file LIKE ? OR source_file = ?)",
+            (SOURCE_CODEX, f"%/{name}", name),
+        )
+        deleted += cur.rowcount
+        conn.execute(
+            "DELETE FROM ingest_state WHERE source_file LIKE ? OR source_file = ?",
+            (f"%/{name}", name),
+        )
+    conn.commit()
+    return {"files": len(names), "deleted_events": deleted}
+
+
+def run_once(reset_codex_forks: bool = False) -> dict:
     """扫描全部数据源，增量入库一次。返回统计 dict。"""
     config.ensure_data_dir()
+    lock_fd = os.open(config.DATA_DIR / "ingest.lock", os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(lock_fd)
+        return {"files_scanned": 0, "records_added": 0, "error": "another ingest is running"}
     conn = db.get_conn(config.DB_PATH)
     db.init_db(conn)
+    reset = None
+    if reset_codex_forks:
+        reset = reset_codex_fork_sessions(conn)
     default_model = codex_parser.read_default_model()
     files_scanned = 0
     records_added = 0
+    errors = []
+
+    def _safe(name, fn):
+        try:
+            return fn()
+        except Exception as exc:
+            errors.append(f"{name}: {exc}")
+            return 0
+
     try:
         for path in claude_files():
-            records_added += _ingest_file(conn, path, SOURCE_CLAUDE, default_model)
+            records_added += _safe(f"claude:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_CLAUDE, default_model))
             files_scanned += 1
         for path in codex_files():
-            records_added += _ingest_file(conn, path, SOURCE_CODEX, default_model)
+            records_added += _safe(f"codex:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_CODEX, default_model))
             files_scanned += 1
         for path in claude_mem_codex_usage_files():
-            records_added += _ingest_file(conn, path, SOURCE_CODEX, default_model)
+            records_added += _safe(f"claude-mem:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_CODEX, default_model))
             files_scanned += 1
-        records_added += _ingest_opencode(conn)
-        records_added += _ingest_hermes(conn)
+        records_added += _safe("opencode", lambda: _ingest_opencode(conn))
+        records_added += _safe("hermes", lambda: _ingest_hermes(conn))
         sqlite_paths = list(openclaw_sqlite_files())
-        # sqlite 已是 v3 权威明细时，trajectory jsonl 合计会和 sqlite 双计；
-        # 配对删除只认磁盘上的 *.jsonl 路径，盖不住 sqlite。有 sqlite 就不再吃 trajectory。
-        if not sqlite_paths:
-            for path in openclaw_files():
-                records_added += _ingest_file(conn, path, SOURCE_OPENCLAW, "")
-                files_scanned += 1
+        # 孤立 trajectory 仍是唯一数据源，有 sqlite 也不能全局停吃；
+        # 配对删除和 sqlite 前缀和去重挡住双计。
+        for path in openclaw_files():
+            records_added += _safe(f"openclaw:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_OPENCLAW, ""))
+            files_scanned += 1
         v3_paths = list(openclaw_v3_files())
         for path in v3_paths:
-            records_added += _ingest_openclaw_v3_file(conn, path)
+            records_added += _safe(f"openclaw-v3:{path.name}", lambda p=path: _ingest_openclaw_v3_file(conn, p))
             files_scanned += 1
-        db.delete_openclaw_cross_format_duplicates(conn, (str(p) for p in v3_paths))
-        records_added += _ingest_openclaw_sqlite(conn)
+        try:
+            db.delete_openclaw_cross_format_duplicates(conn, (str(p) for p in v3_paths))
+        except Exception as exc:
+            errors.append(f"openclaw-dedup: {exc}")
+        records_added += _safe("openclaw-sqlite", lambda: _ingest_openclaw_sqlite(conn))
         files_scanned += len(sqlite_paths)
         for path, observer in (
             (config.GROK_LOG_PATH, False),
             (config.CLAUDE_MEM_GROK_LOG_PATH, True),
         ):
             if path.is_file():
-                records_added += _ingest_grok(conn, path, observer)
+                records_added += _safe(
+                    f"grok:{path.name}",
+                    lambda p=path, obs=observer: _ingest_grok(conn, p, obs),
+                )
                 files_scanned += 1
     finally:
         conn.close()
-    return {"files_scanned": files_scanned, "records_added": records_added}
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+    result = {"files_scanned": files_scanned, "records_added": records_added}
+    if reset is not None:
+        result["reset_codex_forks"] = reset
+    if errors:
+        result["errors"] = errors
+    return result
 
 
 if __name__ == "__main__":
+    import sys
     import time
 
     t0 = time.time()
-    result = run_once()
+    result = run_once(reset_codex_forks="--reset-codex-forks" in sys.argv)
     result["elapsed_sec"] = round(time.time() - t0, 1)
     print(json.dumps(result, ensure_ascii=False))

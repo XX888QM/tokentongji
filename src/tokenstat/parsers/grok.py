@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 from ..models import CATEGORY_MAIN, SOURCE_GROK, UsageRecord, parse_iso_utc
 
-DEFAULT_MODEL = "grok-4.5"
+DEFAULT_MODEL = "unknown"
 
 
 @dataclass
@@ -36,7 +36,6 @@ class GrokState:
         return {
             "models": dict(self.models),
             "cwds": dict(self.cwds),
-            "default_model": self.default_model,
         }
 
     @classmethod
@@ -44,15 +43,18 @@ class GrokState:
         ctx = ctx or {}
         models = ctx.get("models") or {}
         cwds = ctx.get("cwds") or {}
-        # 只保留 str→str，防损坏 ctx
+        # 只保留 str→str，防损坏 ctx。旧 ctx 里的 default_model=grok-4.5 不再沿用。
         clean_models = {
             str(k): str(v) for k, v in models.items() if k and v
         }
         clean_cwds = {
             str(k): str(v) for k, v in cwds.items() if k and v
         }
-        dm = str(ctx.get("default_model") or default_model or DEFAULT_MODEL)
-        return cls(models=clean_models, cwds=clean_cwds, default_model=dm)
+        return cls(
+            models=clean_models,
+            cwds=clean_cwds,
+            default_model=default_model or DEFAULT_MODEL,
+        )
 
 
 def _int(v: Any) -> int:
@@ -117,8 +119,8 @@ def process_record(
         loop_index = 0
     dedup_key = f"grok:{sid}:{ts_raw}:{loop_index}"
 
-    model = str(ctx.get("model") or state.models.get(sid) or state.default_model)
-    project = str(ctx.get("cwd") or state.cwds.get(sid) or "grok")
+    model = str(ctx.get("model") or state.models.get(sid) or state.default_model or "unknown")
+    project = str(ctx.get("cwd") or state.cwds.get(sid) or "unknown")
     total = input_tokens + cached + completion
 
     return UsageRecord(

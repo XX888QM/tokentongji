@@ -187,6 +187,34 @@ class TestCodexParser(unittest.TestCase):
         inherited = codex.process_record(_token_count(135_000_000, 134_000_000, 132_000_000, 1_000_000), "/f", 1, s2)
         self.assertIsNone(inherited)
 
+    def test_fork_parent_replay_skipped_until_divergence(self):
+        # Desktop fork 会把父会话后续 totals 原样抄过来；只跳首条会把整段再计一遍。
+        self.state.parent_totals = [13_019_872, 13_052_691, 13_093_585, 13_137_459, 14_000_000]
+        codex.process_record(_session_meta("/c", sid="child", forked_from="parent"), "/f", 0, self.state)
+        self.assertIsNone(codex.process_record(_token_count(13_019_872, 10_000_000, 9_000_000, 3_019_872), "/f", 1, self.state))
+        self.assertIsNone(codex.process_record(_token_count(13_052_691, 10_002_928, 9_029_440, 3_020_323), "/f", 2, self.state))
+        self.assertIsNone(codex.process_record(_token_count(13_093_585, 10_010_000, 9_040_000, 3_053_585), "/f", 3, self.state))
+        rec = codex.process_record(_token_count(13_200_000, 10_100_000, 9_050_000, 3_100_000), "/f", 4, self.state)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.total_tokens, 13_200_000 - 13_093_585)
+
+    def test_independent_fork_without_parent_overlap_is_counted(self):
+        self.state.parent_totals = [13_019_872, 13_052_691]
+        codex.process_record(_session_meta("/c", sid="child", forked_from="parent"), "/f", 0, self.state)
+        rec = codex.process_record(_token_count(40_000, 30_000, 0, 10_000), "/f", 1, self.state)
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.total_tokens, 40_000)
+
+    def test_missing_timestamp_does_not_advance_baseline(self):
+        codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 0, self.state)
+        first = codex.process_record(_token_count(1000, 600, 200, 400), "/f", 1, self.state)
+        self.assertEqual(first.total_tokens, 1000)
+        lost = _token_count(1500, 800, 300, 700)
+        lost["timestamp"] = ""
+        self.assertIsNone(codex.process_record(lost, "/f", 2, self.state))
+        rec = codex.process_record(_token_count(1800, 1000, 400, 800), "/f", 3, self.state)
+        self.assertEqual(rec.total_tokens, 800)
+
     def test_sum_of_deltas_equals_final_total(self):
         # 验证差分法总量正确：多条累积快照的增量和 == 最后 total
         codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 0, self.state)

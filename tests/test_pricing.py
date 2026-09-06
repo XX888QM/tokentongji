@@ -56,6 +56,19 @@ class TestNormalization(unittest.TestCase):
         r = pricing.rates_for_model("us.anthropic.claude-opus-4-8[1m]", self.p)
         self.assertEqual(r["input"], 5.0)
 
+    def test_stacked_region_and_provider_prefixes_stripped(self):
+        r = pricing.rates_for_model("eu.anthropic.claude-opus-4-8", self.p)
+        self.assertEqual(r["input"], 5.0)
+        r2 = pricing.rates_for_model("anthropic/claude-opus-4-8", self.p)
+        self.assertEqual(r2["input"], 5.0)
+
+    def test_gpt5_short_prefix_does_not_steal_gpt57(self):
+        sol = pricing.rates_for_model("gpt-5.6-sol", self.p)
+        guessed = pricing.rates_for_model("gpt-5.7", self.p)
+        base = pricing.rates_for_model("gpt-5", self.p)
+        self.assertEqual(guessed["input"], sol["input"])
+        self.assertNotEqual(guessed["input"], base["input"])
+
     def test_gpt5_codex_and_auto_review_have_distinct_pricing(self):
         codex = pricing.rates_for_model("gpt-5-codex", self.p)
         review = pricing.rates_for_model("codex-auto-review", self.p)
@@ -267,6 +280,16 @@ class TestCost(unittest.TestCase):
             "gpt-5.4", output_tokens=1_000_000, reasoning_tokens=500_000, pricing=self.p
         )
         self.assertAlmostEqual(c, 15.0, places=6)
+
+    def test_cache_creation_1h_uses_1h_rate(self):
+        # sonnet 5: 5m write $2.50 / 1h write $4.00 per 1M
+        c = pricing.cost_for(
+            "claude-sonnet-5",
+            cache_creation_tokens=1_000_000,
+            cache_creation_1h_tokens=500_000,
+            pricing=self.p,
+        )
+        self.assertAlmostEqual(c, 1.25 + 2.0, places=6)
 
 
 class TestUnknownAndFallback(unittest.TestCase):

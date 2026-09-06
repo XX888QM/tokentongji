@@ -30,12 +30,16 @@ _EVENT_TYPE = "model.completed"
 
 
 def _project_from_session_key(session_key: str) -> str:
-    """旧键 agent:main:openclaw-weixin:direct:... → openclaw-weixin；
+    """旧键 agent:main:openclaw-weixin:... → openclaw-weixin；
+    agent:devops-automator:main → devops-automator；
     新键 openclaw-weixin:direct/group → openclaw-weixin。"""
     if not session_key:
         return "openclaw"
     parts = session_key.split(":")
     if len(parts) >= 3 and parts[0] == "agent":
+        agent_id = parts[1] or "main"
+        if agent_id != "main":
+            return agent_id
         return parts[2] or "openclaw"
     return parts[0] or "openclaw"
 
@@ -97,7 +101,7 @@ def parse_record(obj: dict, source_file: str, pos: int) -> Optional[UsageRecord]
         cache_creation_tokens=cache_creation_tokens,
         reasoning_tokens=0,
         total_tokens=total_tokens,
-        request_prompt_tokens=input_tokens + cache_read_tokens,
+        request_prompt_tokens=None,
         session_id=session_id,
         source_file=source_file,
         pos=pos,
@@ -119,6 +123,9 @@ def parse_v3_record(obj: dict, source_file: str, pos: int, ctx: dict) -> Optiona
     if obj_type == "session":
         ctx["session_id"] = obj.get("id") or ""
         ctx["cwd"] = obj.get("cwd") or "openclaw"
+        session_key = obj.get("sessionKey") or obj.get("session_key")
+        if isinstance(session_key, str) and session_key.strip():
+            ctx["cwd"] = _project_from_session_key(session_key)
         return None
 
     if obj_type != "message":

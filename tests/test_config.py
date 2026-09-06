@@ -12,6 +12,11 @@ class TestConfig(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     config._env_int("TOKENSTAT_TEST", 30)
 
+    def test_wildcard_host_falls_back_to_loopback(self):
+        for raw in ("", "0.0.0.0", "::", "  0.0.0.0  "):
+            self.assertEqual(config.resolve_host(raw), "127.0.0.1", raw)
+        self.assertEqual(config.resolve_host("192.168.1.8"), "192.168.1.8")
+
 
 if __name__ == "__main__":
     unittest.main()

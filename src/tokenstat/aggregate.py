@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 from . import config
@@ -82,6 +83,7 @@ def _total_sql(alias: str = "") -> str:
     return (
         f"{p}input_tokens + {p}output_tokens + "
         f"{p}cache_read_tokens + {p}cache_creation_tokens + "
+        f"COALESCE({p}cache_creation_1h_tokens, 0) + "
         f"CASE WHEN {source_col} = '{SOURCE_OPENCODE}' THEN {p}reasoning_tokens ELSE 0 END"
     )
 
@@ -96,6 +98,7 @@ def _cost_from_row(r: dict, pricing: dict) -> float:
         output_tokens=_row_output(r),
         cache_read_tokens=r["cache_read"],
         cache_creation_tokens=r["cache_creation"],
+        cache_creation_1h_tokens=r.get("cache_creation_1h", 0),
         reasoning_tokens=r.get("reasoning", 0),
         pricing=pricing,
         long_context=long_context,
@@ -173,6 +176,7 @@ def _grouped(
                SUM(output_tokens)         AS output,
                SUM(cache_read_tokens)     AS cache_read,
                SUM(cache_creation_tokens) AS cache_creation,
+               SUM(COALESCE(cache_creation_1h_tokens, 0)) AS cache_creation_1h,
                SUM(reasoning_tokens)      AS reasoning,
                COUNT(*)                   AS records
         FROM usage_events
@@ -403,6 +407,7 @@ def top_sessions(
                SUM(output_tokens)         AS output,
                SUM(cache_read_tokens)     AS cache_read,
                SUM(cache_creation_tokens) AS cache_creation,
+               SUM(COALESCE(cache_creation_1h_tokens, 0)) AS cache_creation_1h,
                SUM(reasoning_tokens)      AS reasoning,
                MIN(date_local)            AS date,
                COUNT(*)                   AS records
@@ -586,6 +591,7 @@ def audit(
                    SUM(input_tokens) AS input, SUM(output_tokens) AS output,
                    SUM(cache_read_tokens) AS cache_read,
                    SUM(cache_creation_tokens) AS cache_creation,
+               SUM(COALESCE(cache_creation_1h_tokens, 0)) AS cache_creation_1h,
                    SUM(reasoning_tokens) AS reasoning
             FROM usage_events
             WHERE model IN ({placeholders})
@@ -606,6 +612,7 @@ def audit(
                 output_tokens=_row_output(r),
                 cache_read_tokens=int(r["cache_read"] or 0),
                 cache_creation_tokens=int(r["cache_creation"] or 0),
+                cache_creation_1h_tokens=int(r.get("cache_creation_1h") or 0),
                 pricing=pricing,
             )
             unknown_models_detail.append({
@@ -633,9 +640,9 @@ def audit(
             issues.append({"level": "warn", "message": f"暂无 {expected} 数据"})
 
     # 同时检查绝对新鲜度与来源间相对落后，避免所有采集一起停摆时仍显示正常。
-    dated = [s for s in sources if s["records"] and s["activity_last_date"]]
+    dated = [s for s in sources if s["records"] and s.get("last_date")]
     if dated:
-        newest = max(s["activity_last_date"] for s in dated)
+        newest = max(s["last_date"] for s in dated)
         newest_d = date.fromisoformat(newest)
         overall_lag = (_today_local() - newest_d).days
         if overall_lag >= config.STALE_SOURCE_DAYS:
@@ -643,14 +650,14 @@ def audit(
                 "level": "warn",
                 "message": f"全部来源已 {overall_lag} 天无新数据（最新 {newest}）",
             })
-        # 单来源落后于最新来源：分不清是采集故障还是用户没用该工具，只作 info 提示，
-        # 不升级为 warn（不触发「需关注」）。全部来源一起停摆才是真故障，见上面 overall_lag。
+        # 单来源落后用 token 归档日，不用 Hermes 聊天心跳。分不清是采集故障还是
+        # 用户没用该工具，只作 info，不升级为 warn。
         for s in dated:
-            lag = (newest_d - date.fromisoformat(s["activity_last_date"])).days
+            lag = (newest_d - date.fromisoformat(s["last_date"])).days
             if lag >= config.STALE_SOURCE_DAYS:
                 issues.append({
                     "level": "info",
-                    "message": f"{s['source']} 已 {lag} 天无新数据（最后 {s['activity_last_date']}）",
+                    "message": f"{s['source']} 已 {lag} 天无新数据（最后 {s['last_date']}）",
                 })
     if not state["files"]:
         issues.append({"level": "warn", "message": "暂无 ingest_state，可能还没完成首次入库"})
@@ -685,11 +692,36 @@ def audit(
                 "message": f"价目表已 {pricing_age_days} 天没核实过官方价格，可能有模型涨价/降价没跟上",
             })
 
+    missing_files = 0
+    missing_tokens = 0
+    for row in conn.execute(
+        "SELECT source_file, SUM(total_tokens) AS total FROM usage_events "
+        "WHERE source_file != '' GROUP BY source_file"
+    ):
+        path = Path(row["source_file"])
+        if not path.is_file():
+            missing_files += 1
+            missing_tokens += int(row["total"] or 0)
+    missing_source_files = {
+        "files": missing_files,
+        "tokens": missing_tokens,
+        "pct": round(missing_tokens / grand_total * 100, 2) if grand_total else 0.0,
+    }
+    if missing_files and missing_source_files["pct"] >= 10:
+        issues.append({
+            "level": "info",
+            "message": (
+                f"{missing_files} 个已入库日志文件已不在磁盘，约占 {missing_source_files['pct']}% token；"
+                "历史仍保留，无法重扫复核"
+            ),
+        })
+
     latest_mtime = state["latest_mtime"]
     return {
         "status": "warn" if any(i["level"] == "warn" for i in issues) else "ok",
         "meta": meta_data,
         "sources": sources,
+        "missing_source_files": missing_source_files,
         "ingest_state": {
             "files": int(state["files"] or 0),
             "latest_mtime": float(latest_mtime or 0),
@@ -735,6 +767,7 @@ def session_detail(
                SUM(output_tokens) AS output,
                SUM(cache_read_tokens) AS cache_read,
                SUM(cache_creation_tokens) AS cache_creation,
+               SUM(COALESCE(cache_creation_1h_tokens, 0)) AS cache_creation_1h,
                SUM(reasoning_tokens) AS reasoning,
                COUNT(*) AS records,
                MIN(date_local) AS first_date,
@@ -915,6 +948,7 @@ def insights(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
                SUM(output_tokens) AS output,
                SUM(cache_read_tokens) AS cache_read,
                SUM(cache_creation_tokens) AS cache_creation,
+               SUM(COALESCE(cache_creation_1h_tokens, 0)) AS cache_creation_1h,
                SUM(reasoning_tokens) AS reasoning
         FROM usage_events
         WHERE date_local BETWEEN ? AND ?

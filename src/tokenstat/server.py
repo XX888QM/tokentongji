@@ -55,7 +55,7 @@ def _refresh_usd_cny_rate() -> None:
         with _RATE_LOCK:
             if rate is not None:
                 _RATE_CACHE["rate"] = rate
-            _RATE_CACHE["ts"] = time.time()
+                _RATE_CACHE["ts"] = time.time()
             _RATE_CACHE["refreshing"] = False
 
 
@@ -140,6 +140,9 @@ def _run_ingest_with_lock() -> None:
         result = ingest.run_once()
         with _INGEST_RUNTIME_LOCK:
             _INGEST_RUNTIME.update({"last_result": result, "last_finished": _now_local_str()})
+            errors = result.get("errors") or ([result["error"]] if result.get("error") else [])
+            if errors:
+                _INGEST_RUNTIME["last_error"] = "; ".join(str(e) for e in errors)[:300]
         if result.get("records_added"):
             print(
                 f"[ingest] 变更 {result['records_added']} 条 "
@@ -380,8 +383,20 @@ class Handler(BaseHTTPRequestHandler):
                 source["collection"]["message"] = (
                     f"最近消息 {activity_date}；累计 token 仍按会话开始日归档"
                 )
+            if source["collection"].get("state") == "missing":
+                data["issues"].append({
+                    "level": "warn",
+                    "message": f"{source['source']} 采集路径不存在",
+                })
         data["runtime"] = _ingest_runtime()
-        data["retention_note"] = "已入库数据独立保存在本机 SQLite；删除原始日志不会删除历史统计。"
+        missing = data.get("missing_source_files") or {}
+        if missing.get("files"):
+            data["retention_note"] = (
+                f"已入库数据独立保存在本机 SQLite；删除原始日志不会删除历史统计。"
+                f"当前 {missing['files']} 个来源文件已不在磁盘，约占 {missing.get('pct', 0)}% token。"
+            )
+        else:
+            data["retention_note"] = "已入库数据独立保存在本机 SQLite；删除原始日志不会删除历史统计。"
         self._append_runtime_issues(data)
         self._send_json(data)
 
@@ -449,10 +464,12 @@ class Handler(BaseHTTPRequestHandler):
 
         output = io.StringIO(newline="")
         writer = csv.writer(output)
-        writer.writerow(["period", "source", "collector", "model", "project", "input_tokens", "output_tokens",
+        writer.writerow(["period", "source", "display_source", "collector", "model", "project", "input_tokens", "output_tokens",
                          "cache_read_tokens", "cache_creation_tokens", "total_tokens", "cost_usd"])
         for row in rows:
-            writer.writerow([period, _safe_csv_text(row["source"]), _safe_csv_text(row["collector"] or ""),
+            display_source = "claude_mem" if row.get("collector") == "claude-mem" else row["source"]
+            writer.writerow([period, _safe_csv_text(row["source"]), _safe_csv_text(display_source),
+                             _safe_csv_text(row["collector"] or ""),
                              _safe_csv_text(row["model"]), _safe_csv_text(row["project"]), row["input"], row["output"],
                              row["cache_read"], row["cache_creation"], row["total"], row["cost_usd"]])
         body = ("\ufeff" + output.getvalue()).encode("utf-8")
@@ -474,6 +491,10 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _require_local_host(self) -> bool:
+        client_host = self.client_address[0] if getattr(self, "client_address", None) else ""
+        if client_host not in ("127.0.0.1", "::1", "localhost"):
+            self._send_json({"ok": False, "error": "local requests only"}, status=403)
+            return False
         allowed = {
             f"127.0.0.1:{config.PORT}",
             f"localhost:{config.PORT}",
@@ -585,8 +606,43 @@ def _ingest_loop(stop_event: threading.Event) -> None:
         stop_event.wait(config.INGEST_INTERVAL_SEC)
 
 
+def _ensure_usable_db() -> bool:
+    """活库空时优先恢复最新备份；已装自启且无备份则拒绝建空账本。"""
+    path = Path(config.DB_PATH)
+    backups = sorted(
+        (config.DATA_DIR / "backups").glob("tokenstat-*.db"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    empty = (not path.is_file()) or path.stat().st_size < 100
+    if not empty:
+        try:
+            conn = db.get_conn(path)
+            try:
+                db.init_db(conn)
+                count = conn.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0]
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            count = 0
+        if count:
+            return True
+        empty = True
+    if backups:
+        print(f"[server] 活库空，从备份恢复 {backups[0].name}", flush=True)
+        db.backup_database(backups[0], path)
+        return True
+    plist = Path.home() / "Library/LaunchAgents/com.yunxin.tokenstat.plist"
+    if plist.is_file():
+        print("[server] 活库空且无备份，拒绝建空账本。请先从 data/backups 恢复。", flush=True)
+        return False
+    return True
+
+
 def serve() -> None:
     config.ensure_data_dir()
+    if not _ensure_usable_db():
+        raise SystemExit(1)
     conn = db.get_conn(config.DB_PATH)
     db.init_db(conn)
     conn.close()

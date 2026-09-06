@@ -3,8 +3,8 @@
 契约（recon 实测）：
 - sessions 表按 session 存「当前累计」token 总量(不是逐条增量事件)，且随会话
   进行只会递增。不能用增量游标跳过已读过的 session_id——那样长会话后续增长的
-  部分会被永久漏计。改用「全表重扫 + dedup_key=session id + ON CONFLICT MAX」，
-  等价于始终写入该 session 的最新累计值，幂等且不会漏计增长。
+  部分会被永久漏计。改用「全表重扫 + dedup_key=session id + ON CONFLICT replace」，
+  等价于始终写入该 session 的最新累计值，错误高值也能回调。不能用字段 MAX。
 - reasoning_tokens 是 output_tokens 的展示子集，不另加到总量或费用。
 - cwd 列作为 project；source 列是发起平台(cli/telegram/weixin/...)不是 LLM
   供应商，不用于分源，统一挂 source="hermes"。

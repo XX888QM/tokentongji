@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
     output_tokens         INTEGER NOT NULL DEFAULT 0,
     cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
     cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0,
     reasoning_tokens      INTEGER NOT NULL DEFAULT 0,
     total_tokens          INTEGER NOT NULL DEFAULT 0,
     request_prompt_tokens INTEGER,
@@ -89,6 +90,10 @@ def init_db(conn: sqlite3.Connection) -> None:
                 """,
                 (SOURCE_GROK, SOURCE_OPENCLAW, SOURCE_OPENCODE),
             )
+        if "cache_creation_1h_tokens" not in columns:
+            conn.execute(
+                "ALTER TABLE usage_events ADD COLUMN cache_creation_1h_tokens INTEGER NOT NULL DEFAULT 0"
+            )
         conn.commit()
     except Exception:
         conn.rollback()
@@ -119,6 +124,7 @@ def _row_tuple(r: UsageRecord) -> tuple:
         r.output_tokens,
         r.cache_read_tokens,
         r.cache_creation_tokens,
+        r.cache_creation_1h_tokens,
         r.reasoning_tokens,
         r.total_tokens,
         r.request_prompt_tokens,
@@ -132,9 +138,10 @@ def _row_tuple(r: UsageRecord) -> tuple:
 _COLS = (
     "ts, date_local, source, model, project, category, "
     "input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, "
-    "reasoning_tokens, total_tokens, request_prompt_tokens, session_id, source_file, pos, dedup_key"
+    "cache_creation_1h_tokens, reasoning_tokens, total_tokens, request_prompt_tokens, "
+    "session_id, source_file, pos, dedup_key"
 )
-_PLACEHOLDERS = ",".join(["?"] * 17)
+_PLACEHOLDERS = ",".join(["?"] * 18)
 
 # Claude 旧流式格式：同 message.id 多行递增，整体采用 total 更大的完整快照。
 _ON_CONFLICT_MAX = """
@@ -148,6 +155,7 @@ ON CONFLICT(dedup_key) DO UPDATE SET
     output_tokens         = excluded.output_tokens,
     cache_read_tokens     = excluded.cache_read_tokens,
     cache_creation_tokens = excluded.cache_creation_tokens,
+    cache_creation_1h_tokens = excluded.cache_creation_1h_tokens,
     reasoning_tokens      = excluded.reasoning_tokens,
     total_tokens          = excluded.total_tokens,
     request_prompt_tokens = excluded.request_prompt_tokens,
@@ -168,6 +176,7 @@ ON CONFLICT(dedup_key) DO UPDATE SET
     output_tokens         = excluded.output_tokens,
     cache_read_tokens     = excluded.cache_read_tokens,
     cache_creation_tokens = excluded.cache_creation_tokens,
+    cache_creation_1h_tokens = excluded.cache_creation_1h_tokens,
     reasoning_tokens      = excluded.reasoning_tokens,
     total_tokens          = excluded.total_tokens,
     request_prompt_tokens = excluded.request_prompt_tokens,
@@ -182,6 +191,7 @@ WHERE excluded.ts != usage_events.ts
    OR excluded.output_tokens != usage_events.output_tokens
    OR excluded.cache_read_tokens != usage_events.cache_read_tokens
    OR excluded.cache_creation_tokens != usage_events.cache_creation_tokens
+   OR excluded.cache_creation_1h_tokens != usage_events.cache_creation_1h_tokens
    OR excluded.reasoning_tokens != usage_events.reasoning_tokens
    OR excluded.total_tokens != usage_events.total_tokens
    OR excluded.request_prompt_tokens IS NOT usage_events.request_prompt_tokens
@@ -352,8 +362,11 @@ def get_ingest_state(conn: sqlite3.Connection, source_file: str) -> Optional[dic
         return None
     try:
         ctx = json.loads(row["ctx"]) if row["ctx"] else {}
+        if not isinstance(ctx, dict):
+            return None
     except (json.JSONDecodeError, TypeError):
-        ctx = {}
+        # 坏 JSON 不能配旧 offset，否则 Codex 会把累计当增量
+        return None
     return {
         "inode": int(row["inode"]),
         "offset": int(row["offset"]),

@@ -98,6 +98,22 @@ class TestClaudeParser(unittest.TestCase):
             ["fallback:iteration:0", "fallback:iteration:1"],
         )
 
+    def test_cache_creation_splits_1h_and_5m(self):
+        obj = _assistant("cache-1h", "/proj")
+        obj["message"]["usage"]["cache_creation"] = {
+            "ephemeral_1h_input_tokens": 10000,
+            "ephemeral_5m_input_tokens": 16070,
+        }
+        rec = claude.parse_record(obj, "/f.jsonl", 0)
+        self.assertEqual(rec.cache_creation_tokens, 16070)
+        self.assertEqual(rec.cache_creation_1h_tokens, 10000)
+        self.assertEqual(rec.total_tokens, 6 + 100 + 16070 + 10000 + 18186)
+
+    def test_cache_creation_without_detail_stays_5m(self):
+        rec = claude.parse_record(_assistant("cache-old", "/proj"), "/f.jsonl", 0)
+        self.assertEqual(rec.cache_creation_tokens, 26070)
+        self.assertEqual(rec.cache_creation_1h_tokens, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -979,5 +979,71 @@ class TestGrokIngest(unittest.TestCase):
         self.assertEqual(self._sum(), (1, 10, 2, 0))
 
 
+class TestIngestStateAndForkReset(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.conn = db.get_conn(":memory:")
+        db.init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def test_bad_ctx_forces_full_rescan(self):
+        path = "/tmp/broken.jsonl"
+        db.set_ingest_state(self.conn, path, inode=1, offset=999, size=999, mtime=1.0, ctx={"ok": 1})
+        self.conn.execute("UPDATE ingest_state SET ctx = ? WHERE source_file = ?", ("not-json", path))
+        self.conn.commit()
+        self.assertIsNone(db.get_ingest_state(self.conn, path))
+        self.conn.execute("UPDATE ingest_state SET ctx = ? WHERE source_file = ?", ("[]", path))
+        self.conn.commit()
+        self.assertIsNone(db.get_ingest_state(self.conn, path))
+
+    def test_reset_codex_fork_sessions_deletes_only_fork_files(self):
+        root = Path(self.tmp.name)
+        parent = root / "rollout-parent.jsonl"
+        child = root / "rollout-child.jsonl"
+        _w(parent, [{"type": "session_meta", "payload": {"id": "parent", "cwd": "/p"}}], mode="wb")
+        _w(
+            child,
+            [{"type": "session_meta", "payload": {"id": "child", "cwd": "/c", "forked_from_id": "parent"}}],
+            mode="wb",
+        )
+        db.insert_records(self.conn, [
+            UsageRecord(ts=1, source="codex", model="gpt-5.5", project="/p",
+                        total_tokens=100, source_file=str(parent), dedup_key="parent-1"),
+            UsageRecord(ts=1, source="codex", model="gpt-5.5", project="/c",
+                        total_tokens=200, source_file=str(child), dedup_key="child-1"),
+        ])
+        db.set_ingest_state(self.conn, str(child), inode=1, offset=10, size=10, mtime=1.0, ctx={})
+        with patch("tokenstat.ingest.codex_files", return_value=[parent, child]):
+            result = ingest.reset_codex_fork_sessions(self.conn)
+        self.assertEqual(result["files"], 1)
+        self.assertEqual(result["deleted_events"], 1)
+        keys = [r[0] for r in self.conn.execute("SELECT dedup_key FROM usage_events")]
+        self.assertEqual(keys, ["parent-1"])
+        self.assertIsNone(db.get_ingest_state(self.conn, str(child)))
+
+    def test_reset_detects_fork_meta_after_parent_meta(self):
+        root = Path(self.tmp.name)
+        mixed = root / "rollout-mixed.jsonl"
+        _w(
+            mixed,
+            [
+                {"type": "session_meta", "payload": {"id": "parent", "cwd": "/p"}},
+                {"type": "session_meta", "payload": {"id": "child", "cwd": "/c", "forked_from_id": "parent"}},
+            ],
+            mode="wb",
+        )
+        db.insert_records(self.conn, [
+            UsageRecord(ts=1, source="codex", model="gpt-5.5", project="/c",
+                        total_tokens=200, source_file=str(mixed), dedup_key="mixed-1"),
+        ])
+        with patch("tokenstat.ingest.codex_files", return_value=[mixed]):
+            result = ingest.reset_codex_fork_sessions(self.conn)
+        self.assertEqual(result["files"], 1)
+        self.assertEqual(result["deleted_events"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

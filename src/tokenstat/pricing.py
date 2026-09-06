@@ -49,9 +49,21 @@ def load_pricing(path: Optional[str] = None) -> dict:
 
 def _clean_model(model: str) -> str:
     m = (model or "").strip().lower()
-    for prefix in ("us.anthropic.", "anthropic.", "openai.", "us.", "eu."):
-        if m.startswith(prefix):
-            m = m[len(prefix):]
+    prefixes = (
+        "us.anthropic.", "eu.anthropic.", "apac.anthropic.",
+        "us.openai.", "anthropic.", "openai.", "us.", "eu.", "apac.",
+    )
+    changed = True
+    while changed and m:
+        changed = False
+        for prefix in prefixes:
+            if m.startswith(prefix):
+                m = m[len(prefix):]
+                changed = True
+                break
+        if "/" in m:
+            m = m.split("/", 1)[-1]
+            changed = True
     for suffix in ("[1m]", "-1m", ":1m"):
         if m.endswith(suffix):
             m = m[: -len(suffix)]
@@ -74,8 +86,13 @@ def _raw_for_model(model: str, pricing: dict) -> Optional[dict]:
 
     best = ""
     for cand in models:
-        if clean.startswith(cand) and len(cand) > len(best):
-            best = cand
+        if not clean.startswith(cand) or len(cand) <= len(best):
+            continue
+        rest = clean[len(cand):]
+        # gpt-5 不能抢走 gpt-5.7；已带版本号的键（gpt-5.5）仍可当前缀
+        if rest.startswith(".") and "." not in cand:
+            continue
+        best = cand
     if best:
         return models[best]
     return _family_rates(clean, models, pricing.get("default", {}))
@@ -232,6 +249,7 @@ def cost_for(
     output_tokens: int = 0,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    cache_creation_1h_tokens: int = 0,
     reasoning_tokens: int = 0,
     pricing: Optional[dict] = None,
     cache_window: str = "5m",
@@ -256,11 +274,23 @@ def cost_for(
         long_context=long_context,
         priced_at=priced_at,
     )
+    write_5m = max(0, int(cache_creation_tokens or 0) - int(cache_creation_1h_tokens or 0))
+    write_1h = max(0, int(cache_creation_1h_tokens or 0))
+    r_1h = r
+    if write_1h:
+        r_1h = rates_for_model(
+            model,
+            pricing,
+            "1h",
+            long_context=long_context,
+            priced_at=priced_at,
+        )
     total = (
         input_tokens * r["input"]
         + output_tokens * r["output"]
         + cache_read_tokens * r["cache_read"]
-        + cache_creation_tokens * r["cache_write"]
+        + write_5m * r["cache_write"]
+        + write_1h * r_1h["cache_write"]
     )
     return total / _MILLION
 

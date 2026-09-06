@@ -31,9 +31,17 @@ class TestTrajectoryFormat(unittest.TestCase):
         self.assertEqual(r.cache_read_tokens, 10)
         self.assertEqual(r.cache_creation_tokens, 7)   # 来自 promptCache.lastCallUsage
         self.assertEqual(r.total_tokens, 160 + 7)      # total_raw + cacheWrite
-        self.assertEqual(r.request_prompt_tokens, 110)
+        self.assertIsNone(r.request_prompt_tokens)
         self.assertEqual(r.project, "openclaw-weixin")  # 从 sessionKey 第三段
         self.assertEqual(r.dedup_key, "openclaw:run-1:3")
+
+    def test_subagent_session_key_uses_agent_id(self):
+        r = openclaw.parse_record(
+            self._event(sessionKey="agent:devops-automator:main:openclaw-weixin"),
+            "/f.trajectory.jsonl",
+            0,
+        )
+        self.assertEqual(r.project, "devops-automator")
 
     def test_wrong_type_skipped(self):
         self.assertIsNone(openclaw.parse_record({"type": "other"}, "/f", 0))
@@ -91,6 +99,14 @@ class TestV3Format(unittest.TestCase):
         self.assertEqual(r.request_prompt_tokens, 100)
         self.assertEqual(r.dedup_key, "openclaw-v3:m1")
         self.assertEqual(r.ts, 1_700_000_000)  # ms → s
+
+    def test_session_key_overrides_cwd_as_project(self):
+        ctx = {}
+        session = self._session("sX", "/home/x")
+        session["sessionKey"] = "agent:devops-automator:main"
+        self.assertIsNone(openclaw.parse_v3_record(session, "/f", 0, ctx))
+        r = openclaw.parse_v3_record(self._msg(), "/f", 1, ctx)
+        self.assertEqual(r.project, "devops-automator")
 
     def test_non_assistant_skipped(self):
         ctx = {}

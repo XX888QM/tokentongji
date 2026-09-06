@@ -72,8 +72,8 @@ class TestGrokParser(unittest.TestCase):
     def test_default_model_when_missing(self):
         state = grok.GrokState()
         r = grok.process_record(_inference_done(), "/u.jsonl", 0, state)
-        self.assertEqual(r.model, "grok-4.5")
-        self.assertEqual(r.project, "grok")
+        self.assertEqual(r.model, "unknown")
+        self.assertEqual(r.project, "unknown")
 
     def test_usage_event_can_supply_model_and_project(self):
         state = grok.GrokState()

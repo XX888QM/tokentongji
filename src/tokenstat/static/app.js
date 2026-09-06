@@ -93,8 +93,15 @@ function rgba(hex, alpha) {
 }
 
 // ---- 告警设置 ----
+function storageGet(store, key) {
+  try { return store.getItem(key); } catch { return null; }
+}
+function storageSet(store, key, value) {
+  try { store.setItem(key, value); } catch { /* 隐私模式 / 配额 */ }
+}
+
 function loadAlertConfig() {
-  try { return JSON.parse(localStorage.getItem('tokenstat_alert') || '{}'); }
+  try { return JSON.parse(storageGet(localStorage, 'tokenstat_alert') || '{}'); }
   catch { return {}; }
 }
 function saveSettings() {
@@ -103,7 +110,7 @@ function saveSettings() {
     daily_tokens: (parseFloat(document.getElementById('alertTokens').value) || 0) * 1e4,
     desktop_notify: document.getElementById('desktopNotify').checked,
   };
-  localStorage.setItem('tokenstat_alert', JSON.stringify(cfg));
+  storageSet(localStorage, 'tokenstat_alert', JSON.stringify(cfg));
   closeSettings();
   refreshAll();
 }
@@ -127,11 +134,11 @@ function toggleSettings() {
   document.getElementById('alertCost').focus();
 }
 function dismissAlert() {
-  sessionStorage.setItem('tokenstat_alert_dismissed_' + localDateKey(), '1');
+  storageSet(sessionStorage, 'tokenstat_alert_dismissed_' + localDateKey(), '1');
   document.getElementById('alertBar').style.display = 'none';
 }
 function checkAlert(todayData) {
-  if (sessionStorage.getItem('tokenstat_alert_dismissed_' + localDateKey())) return;
+  if (storageGet(sessionStorage, 'tokenstat_alert_dismissed_' + localDateKey())) return;
   const cfg = loadAlertConfig();
   const msgs = [];
   if (cfg.daily_cost > 0 && todayData.cost_usd * CNY_RATE >= cfg.daily_cost)
@@ -262,6 +269,7 @@ function renderHeroTotal(el, total) {
   }
 
   if (heroNumberFrame) window.cancelAnimationFrame(heroNumberFrame);
+  if (el.dataset) el.dataset.tokenValue = String(total);
   const startedAt = performance.now();
   const step = (now) => {
     const progress = Math.min(1, (now - startedAt) / duration);
@@ -298,8 +306,8 @@ async function maybeNotifyAlert(message) {
   if (!cfg.desktop_notify) return;
   // 按「日期」去重：message 内嵌实时金额，若含金额则每次刷新键都变会重复弹窗
   const key = 'tokenstat_notify_' + localDateKey();
-  if (sessionStorage.getItem(key)) return;
-  sessionStorage.setItem(key, '1');
+  if (storageGet(sessionStorage, key)) return;
+  storageSet(sessionStorage, key, '1');
   try {
     await postJSON('/api/notify', { kind: 'alert', message });
   } catch (_) {
@@ -467,8 +475,16 @@ async function loadDaily() {
 const badge = (src, label = src, filterable = true) =>
   `<span class="badge ${esc(src)}"${filterable ? ` data-source="${esc(src)}"` : ''}>${esc(label)}</span>`;
 const sourceBadge = (row) => row.collector === 'claude-mem'
-  ? badge('claude-mem', 'claude-mem', false)
+  ? badge('claude_mem', 'claude-mem', true)
   : badge(row.source);
+
+function displaySourceOf(row) {
+  return row.collector === 'claude-mem' ? 'claude_mem' : row.source;
+}
+
+function matchesSourceFilter(row) {
+  return !sourceFilter || displaySourceOf(row) === sourceFilter;
+}
 
 // ---- 来源筛选：点来源名字/徽标只看这个来源 ----
 function toggleSourceFilter(source) {
@@ -518,6 +534,11 @@ function setHeaderHealth(status) {
   const warn = status !== 'ok';
   live.textContent = warn ? '需关注' : '运行正常';
   live.className = 'live ' + (warn ? 'warn' : 'ok');
+  if (live.style) live.style.cursor = warn ? 'pointer' : '';
+  live.onclick = warn ? () => {
+    const audit = document.getElementById('audit');
+    if (audit) audit.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } : null;
 }
 
 async function loadAudit() {
@@ -615,7 +636,7 @@ async function loadTopSessions() {
 }
 
 function renderTopSessions(b) {
-  const rows = sourceFilter ? b.sessions.filter((r) => r.source === sourceFilter) : b.sessions;
+  const rows = sourceFilter ? b.sessions.filter(matchesSourceFilter) : b.sessions;
   document.querySelector('#topSessionsTable tbody').innerHTML =
     rows.map((r, i) => `<tr>
       <td class="num">${i + 1}</td>
@@ -695,7 +716,7 @@ async function loadBreakdown() {
 }
 
 function renderBreakdown(b) {
-  const mRows = sourceFilter ? b.by_model.filter((r) => r.source === sourceFilter) : b.by_model;
+  const mRows = sourceFilter ? b.by_model.filter(matchesSourceFilter) : b.by_model;
   // 合计用后端权威总额，保证「按模型」「按项目」两表合计分毫不差（各自逐行 round 会差几分钱）；
   // 筛了来源之后后端总额不再适用，改成从筛选后的行现算。
   const mTotalTokens = sourceFilter ? mRows.reduce((sum, r) => sum + r.total, 0) : b.total_tokens;
@@ -708,7 +729,7 @@ function renderBreakdown(b) {
       </tr>`).join('') || '<tr><td colspan="8">暂无数据</td></tr>';
   document.querySelector('#modelTable tfoot').innerHTML = '';
 
-  projectRows = sourceFilter ? b.by_project.filter((r) => r.source === sourceFilter) : b.by_project;
+  projectRows = sourceFilter ? b.by_project.filter(matchesSourceFilter) : b.by_project;
   projectTotalTokens = mTotalTokens;
   projectTotalCost = mTotalCost;
   // 每页行数跟随「按模型」行数，让两侧数据行保持整齐（下限 6 防病态分页）
@@ -769,17 +790,28 @@ async function refreshAll() {
   }
 }
 
+function markTablesLoading() {
+  const loading = (cols) => `<tr><td colspan="${cols}">加载中…</td></tr>`;
+  const modelBody = document.querySelector('#modelTable tbody');
+  const projectBody = document.querySelector('#projectTable tbody');
+  const sessionBody = document.querySelector('#topSessionsTable tbody');
+  if (modelBody) modelBody.innerHTML = loading(8);
+  if (projectBody) projectBody.innerHTML = loading(4);
+  if (sessionBody) sessionBody.innerHTML = loading(7);
+}
+
 function setupPeriodToggle() {
-  const saved = sessionStorage.getItem('tokenstat_period');
+  const saved = storageGet(sessionStorage, 'tokenstat_period');
   if (VALID_PERIODS.has(saved)) currentPeriod = saved;
   renderPeriodState();
   document.getElementById('periodToggle').addEventListener('click', (e) => {
     const btn = e.target.closest('button');
     if (!btn || !VALID_PERIODS.has(btn.dataset.period)) return;
     currentPeriod = btn.dataset.period;
-    sessionStorage.setItem('tokenstat_period', currentPeriod);
+    storageSet(sessionStorage, 'tokenstat_period', currentPeriod);
     renderPeriodState();
     projectPage = 0;  // 切周期回到第 1 页（定时刷新不重置，避免打断翻页浏览）
+    markTablesLoading();
     // 按钮高亮是同步切的，下面两个请求若失败，不能让表格悄悄停在旧周期的
     // 数据却不吭声——那样"选中的周期"和"表格显示的周期"会对不上、误导用户。
     Promise.all([loadBreakdown(), loadTopSessions()]).catch((e) => {
