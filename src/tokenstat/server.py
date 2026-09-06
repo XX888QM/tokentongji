@@ -362,6 +362,7 @@ class Handler(BaseHTTPRequestHandler):
             "hermes": _path_status(config.HERMES_STATE_DB),
             "grok": _path_status(config.GROK_LOG_PATH),
             "claude_mem_grok": _path_status(config.CLAUDE_MEM_GROK_LOG_PATH),
+            "cursor": _path_status(config.CURSOR_STATE_DB),
         }
         path_available = {
             "claude": data["data_sources"]["claude"]["exists"],
@@ -372,6 +373,9 @@ class Handler(BaseHTTPRequestHandler):
             "grok": (
                 data["data_sources"]["grok"]["exists"]
                 or data["data_sources"]["claude_mem_grok"]["exists"]
+            ),
+            "cursor": (
+                config.CURSOR_ENABLED and data["data_sources"]["cursor"]["exists"]
             ),
         }
         for source in data["sources"]:

@@ -203,6 +203,21 @@ class TestNormalization(unittest.TestCase):
         fam = pricing.rates_for_model("grok-99-future", self.p)
         self.assertEqual(fam["input"], 2.0)
 
+    def test_cursor_dashboard_model_names(self):
+        grok46 = pricing.rates_for_model("grok-4.6", self.p)
+        grok45 = pricing.rates_for_model("grok-4.5", self.p)
+        for model in ("cursor-grok-4.6-high-fast", "cursor-grok-4.6-high", "cursor.grok-4.6-xhigh"):
+            self.assertFalse(pricing.is_unknown_model(model, self.p), model)
+            self.assertEqual(pricing.rates_for_model(model, self.p)["cache_read"], grok46["cache_read"], model)
+        self.assertEqual(
+            pricing.rates_for_model("cursor-grok-4.5-high", self.p)["cache_read"],
+            grok45["cache_read"],
+        )
+        sonnet = pricing.rates_for_model("claude-4.6-sonnet-medium-thinking", self.p)
+        self.assertEqual(sonnet["input"], pricing.rates_for_model("claude-sonnet-4-6", self.p)["input"])
+        self.assertFalse(pricing.is_unknown_model("claude-4.6-sonnet-medium-thinking", self.p))
+        self.assertTrue(pricing.is_unknown_model("composer-2.5-fast", self.p))
+
     def test_grok_and_deepseek_aliases(self):
         build = pricing.rates_for_model("grok-build-0.1", self.p)
         code_fast = pricing.rates_for_model("grok-code-fast-1", self.p)
@@ -282,10 +297,11 @@ class TestCost(unittest.TestCase):
         self.assertAlmostEqual(c, 15.0, places=6)
 
     def test_cache_creation_1h_uses_1h_rate(self):
-        # sonnet 5: 5m write $2.50 / 1h write $4.00 per 1M
+        # 入库口径是加法拆分：cache_creation=5m-only，1h 另列。sonnet 5:
+        # 5m write $2.50 / 1h write $4.00 per 1M → 0.5M * 2.50 + 0.5M * 4.00
         c = pricing.cost_for(
             "claude-sonnet-5",
-            cache_creation_tokens=1_000_000,
+            cache_creation_tokens=500_000,
             cache_creation_1h_tokens=500_000,
             pricing=self.p,
         )

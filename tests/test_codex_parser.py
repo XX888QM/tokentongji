@@ -198,6 +198,20 @@ class TestCodexParser(unittest.TestCase):
         self.assertIsNotNone(rec)
         self.assertEqual(rec.total_tokens, 13_200_000 - 13_093_585)
 
+    def test_replay_index_zero_survives_ctx_roundtrip(self):
+        self.state.parent_totals = [13_019_872, 13_052_691]
+        codex.process_record(_session_meta("/c", sid="child", forked_from="parent"), "/f", 0, self.state)
+        self.assertIsNone(codex.process_record(
+            _token_count(13_019_872, 10_000_000, 9_000_000, 3_019_872), "/f", 1, self.state
+        ))
+        self.assertEqual(self.state.replay_index, 0)
+        restored = CodexState.from_ctx(self.state.to_ctx(), default_model="gpt-5.5")
+        self.assertEqual(restored.replay_index, 0)
+        self.assertTrue(restored.skipping_replay)
+        self.assertIsNone(codex.process_record(
+            _token_count(13_052_691, 10_002_928, 9_029_440, 3_020_323), "/f", 2, restored
+        ))
+
     def test_independent_fork_without_parent_overlap_is_counted(self):
         self.state.parent_totals = [13_019_872, 13_052_691]
         codex.process_record(_session_meta("/c", sid="child", forked_from="parent"), "/f", 0, self.state)

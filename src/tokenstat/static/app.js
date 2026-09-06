@@ -50,10 +50,11 @@ const SOURCE_META = {
   openclaw: { label: 'Openclaw', color: '#d58acb' },
   hermes:   { label: 'Hermes',   color: '#69c7dc' },
   grok:     { label: 'Grok',     color: '#e2bb62' },
+  cursor:   { label: 'Cursor',   color: '#7b8cff' },
 };
 const SOURCE_ORDER = Object.keys(SOURCE_META);
 const OBSERVATORY_SOURCE_COLUMNS = {
-  left: ['claude', 'claude_mem', 'opencode'],
+  left: ['claude', 'claude_mem', 'opencode', 'cursor'],
   right: ['codex', 'grok', 'openclaw', 'hermes'],
 };
 

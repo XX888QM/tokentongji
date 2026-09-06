@@ -17,6 +17,15 @@ class TestConfig(unittest.TestCase):
             self.assertEqual(config.resolve_host(raw), "127.0.0.1", raw)
         self.assertEqual(config.resolve_host("192.168.1.8"), "192.168.1.8")
 
+    def test_flag_accepts_zero(self):
+        with patch.dict(os.environ, {"TOKENSTAT_FLAG": "0"}):
+            self.assertFalse(config._env_flag("TOKENSTAT_FLAG", True))
+        with patch.dict(os.environ, {"TOKENSTAT_FLAG": "1"}):
+            self.assertTrue(config._env_flag("TOKENSTAT_FLAG", False))
+        with patch.dict(os.environ, {"TOKENSTAT_FLAG": "maybe"}):
+            with self.assertRaises(ValueError):
+                config._env_flag("TOKENSTAT_FLAG", True)
+
 
 if __name__ == "__main__":
     unittest.main()

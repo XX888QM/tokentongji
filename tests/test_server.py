@@ -137,6 +137,7 @@ class TestDailyEndpointFallback(unittest.TestCase):
         self.assertIn("opencode", body["data_sources"])
         self.assertIn("openclaw", body["data_sources"])
         self.assertIn("grok", body["data_sources"])
+        self.assertIn("cursor", body["data_sources"])
 
     def test_health_endpoint_returns_200(self):
         code, body = _call_get("/api/health", self._db_path)
@@ -480,6 +481,8 @@ class TestIngestToApi(unittest.TestCase):
             HERMES_STATE_DB=root / "hermes.db",
             GROK_LOG_PATH=root / "grok.jsonl",
             CLAUDE_MEM_GROK_LOG_PATH=self._grok_observer_log,
+            CURSOR_ENABLED=False,
+            CURSOR_STATE_DB=root / "cursor-state.vscdb",
         )
         self._config_patch.start()
 

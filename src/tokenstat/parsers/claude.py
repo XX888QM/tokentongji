@@ -32,7 +32,10 @@ _SUBAGENT_MARK = "/subagents/workflows/"
 
 
 def _cache_creation_split(usage: dict) -> tuple[int, int]:
-    """拆 5m / 1h 缓存写入。缺细分时整段落进 5m，兼容旧日志。"""
+    """拆 5m / 1h 缓存写入。返回 (five_m, one_h)，两字段相加才是写入总量。
+
+    缺细分时整段落进 5m、1h=0，兼容旧日志。cost_for / _total_sql 都按这个加法口径。
+    """
     total = int(usage.get("cache_creation_input_tokens", 0) or 0)
     detail = usage.get("cache_creation")
     one_h = 0

@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -1043,6 +1044,104 @@ class TestIngestStateAndForkReset(unittest.TestCase):
             result = ingest.reset_codex_fork_sessions(self.conn)
         self.assertEqual(result["files"], 1)
         self.assertEqual(result["deleted_events"], 1)
+
+
+class TestCursorIngest(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.get_conn(":memory:")
+        db.init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _rec(self, key="cursor:1:m:1:0:0:1:1"):
+        return UsageRecord(
+            ts=1750597784,
+            source="cursor",
+            model="composer-2.5-fast",
+            project="cursor",
+            input_tokens=1,
+            output_tokens=1,
+            total_tokens=2,
+            request_prompt_tokens=1,
+            dedup_key=key,
+        )
+
+    def test_disabled_skips_without_fetch(self):
+        with patch("tokenstat.ingest.config.CURSOR_ENABLED", False):
+            with patch("tokenstat.ingest.cursor_parser.fetch_records") as fetch:
+                self.assertEqual(ingest._ingest_cursor(self.conn), 0)
+                fetch.assert_not_called()
+
+    def test_auth_error_backs_off(self):
+        with patch("tokenstat.ingest.config.CURSOR_ENABLED", True):
+            with patch("tokenstat.ingest.config.CURSOR_REFRESH_SEC", 600):
+                with patch(
+                    "tokenstat.ingest.cursor_parser.fetch_records",
+                    side_effect=ingest.cursor_parser.CursorAuthError("expired"),
+                ) as fetch:
+                    with self.assertRaises(ingest.cursor_parser.CursorAuthError):
+                        ingest._ingest_cursor(self.conn)
+                    self.assertEqual(ingest._ingest_cursor(self.conn), 0)
+                    self.assertEqual(fetch.call_count, 1)
+
+    def test_fetch_error_backs_off(self):
+        with patch("tokenstat.ingest.config.CURSOR_ENABLED", True):
+            with patch("tokenstat.ingest.config.CURSOR_REFRESH_SEC", 600):
+                with patch(
+                    "tokenstat.ingest.cursor_parser.fetch_records",
+                    side_effect=ingest.cursor_parser.CursorFetchError("HTTP 503"),
+                ) as fetch:
+                    with self.assertRaises(ingest.cursor_parser.CursorFetchError):
+                        ingest._ingest_cursor(self.conn)
+                    self.assertEqual(ingest._ingest_cursor(self.conn), 0)
+                    self.assertEqual(fetch.call_count, 1)
+
+    def test_skip_does_not_throttle(self):
+        with patch("tokenstat.ingest.config.CURSOR_ENABLED", True):
+            with patch(
+                "tokenstat.ingest.cursor_parser.fetch_records",
+                side_effect=ingest.cursor_parser.CursorSkip("signed out"),
+            ):
+                self.assertEqual(ingest._ingest_cursor(self.conn), 0)
+        self.assertIsNone(db.get_ingest_state(self.conn, "cursor:dashboard-csv"))
+
+    def test_success_is_throttled_then_deduped(self):
+        rec = self._rec()
+        with patch("tokenstat.ingest.config.CURSOR_ENABLED", True):
+            with patch("tokenstat.ingest.config.CURSOR_REFRESH_SEC", 600):
+                with patch(
+                    "tokenstat.ingest.cursor_parser.fetch_records",
+                    return_value=[rec],
+                ) as fetch:
+                    self.assertEqual(ingest._ingest_cursor(self.conn), 1)
+                    self.assertEqual(ingest._ingest_cursor(self.conn), 0)
+                    self.assertEqual(fetch.call_count, 1)
+                    fetch.return_value = [rec, self._rec("cursor:2:m:2:0:0:2:1")]
+                    with patch("tokenstat.ingest.time.time", return_value=1_800_000_000):
+                        self.assertEqual(ingest._ingest_cursor(self.conn), 1)
+                    self.assertEqual(fetch.call_count, 2)
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM usage_events WHERE source='cursor'"
+        ).fetchone()[0]
+        self.assertEqual(count, 2)
+
+
+class TestIngestLock(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.data = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_db_open_failure_releases_lock(self):
+        with patch("tokenstat.config.DATA_DIR", self.data):
+            with patch("tokenstat.ingest.db.get_conn", side_effect=sqlite3.Error("boom")):
+                with self.assertRaises(sqlite3.Error):
+                    ingest.run_once()
+                with self.assertRaises(sqlite3.Error):
+                    ingest.run_once()
 
 
 if __name__ == "__main__":

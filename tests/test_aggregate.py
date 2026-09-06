@@ -713,5 +713,22 @@ class TestClaudeMemSummary(unittest.TestCase):
                 "anthropic": {}, "openai": {}}
 
 
+class TestCacheCreationCostPath(unittest.TestCase):
+    def test_grouped_row_does_not_subtract_1h_from_5m(self):
+        # parser 存的是 5m-only + 1h-only；聚合 SUM 后原样交给 cost_for。
+        row = {
+            "model": "claude-sonnet-5",
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_creation": 700_000,
+            "cache_creation_1h": 300_000,
+            "pricing_date": "2026-09-06",
+        }
+        pricing_table = pricing.load_pricing()
+        # 700k * $2.50 + 300k * $4.00 = $1.75 + $1.20
+        self.assertAlmostEqual(aggregate._cost_from_row(row, pricing_table), 2.95, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()

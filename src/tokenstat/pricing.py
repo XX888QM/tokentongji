@@ -1,10 +1,10 @@
 """费用估算：按公开单价把 token 折算成美元。
 
-订阅制（Claude Max / Codex 套餐）下 token 不直接对应扣费，
+订阅制（Claude Max / Codex / Cursor 套餐）下 token 不直接对应扣费，
 此处费用**仅供参考**。单价表见 pricing.json（美元 / 每百万 token）。
 
 model 归一化策略（recon 实测约束）：
-- 先 lower、剥离区域前缀(us.anthropic./anthropic./openai.)与后缀([1m]/-1m)
+- 先 lower、剥离区域前缀(us.anthropic./anthropic./openai./cursor-)与后缀([1m]/-1m)
 - 精确匹配 → 最长前缀匹配 → 家族规则(opus/sonnet/haiku/gpt-5) → default
 - 未知 model **fail-loud**（记录到 _UNKNOWN_MODELS）而非静默按 0
 """
@@ -51,7 +51,8 @@ def _clean_model(model: str) -> str:
     m = (model or "").strip().lower()
     prefixes = (
         "us.anthropic.", "eu.anthropic.", "apac.anthropic.",
-        "us.openai.", "anthropic.", "openai.", "us.", "eu.", "apac.",
+        "us.openai.", "anthropic.", "openai.", "cursor.", "us.", "eu.", "apac.",
+        "cursor-",
     )
     changed = True
     while changed and m:
@@ -118,6 +119,8 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
         return pick("claude-opus-5", "claude-opus-4-8", "claude-opus-4-7")
     if clean.startswith("claude-sonnet"):
         return pick("claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5")
+    if clean.startswith(("claude-4.6-sonnet", "claude-4-6-sonnet")):
+        return pick("claude-sonnet-4-6")
     if clean.startswith("claude-haiku"):
         return pick("claude-haiku-4-5")
     if clean.startswith("gpt-5-codex") or clean == "codex-auto-review":
@@ -261,7 +264,8 @@ def cost_for(
     归一化口径（两来源统一）：
     - input_tokens = 全价输入（已剔除缓存）。
     - cache_read_tokens = 缓存命中，低价。
-    - cache_creation_tokens = 缓存写入（Claude 或来源已明确标出的 OpenAI 写入）。
+    - cache_creation_tokens = 5m 缓存写入（有 1h 拆分时不含 1h；旧行无拆分则整段在此）。
+    - cache_creation_1h_tokens = 1h 缓存写入，与上一字段相加才是写入总量。
     - output_tokens 应为计费输出；若来源把 reasoning 单列，调用方需先并入 output。
       reasoning_tokens 仅展示、不另计费。
     """
@@ -274,7 +278,7 @@ def cost_for(
         long_context=long_context,
         priced_at=priced_at,
     )
-    write_5m = max(0, int(cache_creation_tokens or 0) - int(cache_creation_1h_tokens or 0))
+    write_5m = max(0, int(cache_creation_tokens or 0))
     write_1h = max(0, int(cache_creation_1h_tokens or 0))
     r_1h = r
     if write_1h:

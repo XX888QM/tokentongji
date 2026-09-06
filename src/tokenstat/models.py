@@ -26,6 +26,7 @@ SOURCE_OPENCODE = "opencode"
 SOURCE_OPENCLAW = "openclaw"
 SOURCE_HERMES = "hermes"
 SOURCE_GROK = "grok"
+SOURCE_CURSOR = "cursor"
 VALID_SOURCES = (
     SOURCE_CLAUDE,
     SOURCE_CODEX,
@@ -33,6 +34,7 @@ VALID_SOURCES = (
     SOURCE_OPENCLAW,
     SOURCE_HERMES,
     SOURCE_GROK,
+    SOURCE_CURSOR,
 )
 
 CATEGORY_MAIN = "main"
@@ -57,7 +59,7 @@ class UsageRecord:
     归一化口径：
     - input_tokens = 全价输入（已剔除缓存命中部分）。
     - cache_read_tokens = 缓存命中输入。
-    - cache_creation_tokens = 缓存写入（仅 Claude）。
+    - cache_creation_tokens = 5m 缓存写入（有 1h 拆分时不含 1h；仅 Claude）。
     - request_prompt_tokens = 有原始单次请求口径时的完整 prompt（含缓存）；
       没有可靠口径时为 None，不能据此猜长上下文计费档。
     - output_tokens = 普通输出；Codex 已含 reasoning，Opencode 将 reasoning 单独保留。
@@ -65,7 +67,7 @@ class UsageRecord:
     """
 
     ts: int  # epoch 秒（UTC）
-    source: str  # "claude" | "codex" | "opencode" | "openclaw" | "hermes" | "grok"
+    source: str  # "claude" | "codex" | "opencode" | "openclaw" | "hermes" | "grok" | "cursor"
     model: str
     project: str  # 完整 cwd 绝对路径（分组键）
     input_tokens: int = 0

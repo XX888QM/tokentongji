@@ -153,7 +153,9 @@ class CodexState:
             default_model=default_model or _DEFAULT_MODEL_FALLBACK,
             pending_baseline=bool(ctx.get("pending_baseline")),
             parent_totals=parent_totals,
-            replay_index=int(ctx.get("replay_index") or -1),
+            replay_index=(
+                int(ctx["replay_index"]) if ctx.get("replay_index") is not None else -1
+            ),
             skipping_replay=bool(ctx.get("skipping_replay")),
         )
 

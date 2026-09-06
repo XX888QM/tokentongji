@@ -20,6 +20,18 @@ def _env_int(name: str, default: int) -> int:
         raise ValueError(f"环境变量 {name} 须为正整数，收到 {val!r}")
     return parsed
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    normalized = val.strip().lower()
+    if normalized in ("1", "true", "yes", "on"):
+        return True
+    if normalized in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(f"环境变量 {name} 须为 0/1，收到 {val!r}")
+
 HOME = Path.home()
 
 # ---- 数据源 ----
@@ -57,6 +69,29 @@ CLAUDE_MEM_GROK_LOG_PATH = Path(
     os.environ.get(
         "TOKENSTAT_CLAUDE_MEM_GROK_LOG",
         str(HOME / ".claude-mem" / "observer-grok-home" / "logs" / "unified.jsonl"),
+    )
+)
+# Cursor 本机没有可入账的增量 token，改为读仪表盘 CSV。未登录不发请求。
+CURSOR_ENABLED = _env_flag("TOKENSTAT_CURSOR", True)
+CURSOR_REFRESH_SEC = _env_int("TOKENSTAT_CURSOR_REFRESH", 600)
+CURSOR_STATE_DB = Path(
+    os.environ.get(
+        "TOKENSTAT_CURSOR_STATE_DB",
+        str(
+            HOME
+            / "Library"
+            / "Application Support"
+            / "Cursor"
+            / "User"
+            / "globalStorage"
+            / "state.vscdb"
+        ),
+    )
+)
+CURSOR_CLI_CONFIG = Path(
+    os.environ.get(
+        "TOKENSTAT_CURSOR_CLI_CONFIG",
+        str(HOME / ".cursor" / "cli-config.json"),
     )
 )
 

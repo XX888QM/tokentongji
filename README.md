@@ -2,8 +2,8 @@
 
 🇨🇳 **简体中文** · [🇹🇼 繁體中文](README.zh-TW.md) · [🇺🇸 English](README.en.md) · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · [🇪🇸 Español](README.es.md)
 
-统计本机 **Claude Code**、**Codex**、**OpenCode**、**OpenClaw**、**Hermes**、**Grok** 六类工具的 token 用量，
-按天 / 周 / 月 / 累计汇总，桌面浏览器本地 Web 仪表盘实时展示。纯本地日志解析，**不调用任何外部 API（汇率除外）、零第三方依赖**。项目不提供手机端适配。
+统计本机 **Claude Code**、**Codex**、**OpenCode**、**OpenClaw**、**Hermes**、**Grok**、**Cursor** 七类工具的 token 用量，
+按天 / 周 / 月 / 累计汇总，桌面浏览器本地 Web 仪表盘实时展示。**零第三方依赖**。除汇率和 Cursor 仪表盘用量 CSV 外不调用外部 API。项目不提供手机端适配。
 
 ## 数据来源
 
@@ -15,6 +15,7 @@
 | OpenClaw | `~/.openclaw/agents/*/agent/openclaw-agent.sqlite`；旧 jsonl 若还在也读 | 2026-09 起会话在 sqlite 的 v3 `transcript_events`；与旧 jsonl 共用 `openclaw-v3:{id}` 去重。trajectory 合计行在有 v3 时整段删除 |
 | Hermes | `~/.hermes/state.db` | 直读累计 session 行并同步覆盖；reasoning 是 output 子集，不重复相加 |
 | Grok | `~/.grok/logs/unified.jsonl` | Grok CLI 与 claude-mem API 转录的 `shell.turn.inference_done` 增量 token；model/cwd 优先读事件内容，否则按 sid carry-forward |
+| Cursor | 本机 `state.vscdb` 登录态 + `cursor.com` 仪表盘 CSV | 本机 bubble 没有可入账增量；用 JWT 拉用量事件。无项目字段。`TOKENSTAT_CURSOR=0` 可关 |
 
 Claude 与 Codex 的关键去重、差分和 fork 基线规则均有回归测试。实际统计结果仍取决于各工具日志版本与本机历史数据，建议结合页面“运行审计”检查来源新鲜度和未知模型。
 
@@ -91,9 +92,12 @@ bash scripts/uninstall-launchd.sh  # 只卸自启，不删库
 | `TOKENSTAT_GROK_LOG` | `~/.grok/logs/unified.jsonl` | Grok 统一日志路径 |
 | `TOKENSTAT_CLAUDE_MEM_CODEX_USAGE_DIR` | `~/.claude-mem/usage` | claude-mem Codex 单次真实用量 JSONL 目录 |
 | `TOKENSTAT_OPENCLAW_AGENTS_DIR` | `~/.openclaw/agents` | OpenClaw 各 agent 目录，用来找 `*/agent/openclaw-agent.sqlite` |
+| `TOKENSTAT_CURSOR` | `1` | 设为 `0` 关闭 Cursor 仪表盘采集 |
+| `TOKENSTAT_CURSOR_REFRESH` | `600` | Cursor CSV 成功拉取后的最短间隔（秒） |
+| `TOKENSTAT_CURSOR_STATE_DB` | `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` | Cursor 本地登录态库 |
 
 费用单价见 `src/tokenstat/pricing.json`，可自行调整（美元/百万 token）。本地/自托管模型放 `local` 分区按零费率处理。`codex-auto-review` 按 OpenAI Codex 专项 `gpt-5.3-codex` 公开价格估算；`gpt-5-codex` 使用其自身公开价格。
-**注意：订阅制（Claude Max / Codex / Grok 套餐）下 token 不直接对应扣费，费用仅供参考。**
+**注意：订阅制（Claude Max / Codex / Grok / Cursor 套餐）下 token 不直接对应扣费，费用仅供参考。**
 
 ## 测试
 

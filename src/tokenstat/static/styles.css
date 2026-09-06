@@ -455,7 +455,7 @@ body { background: var(--hud-void); color: var(--hud-text); }
   position: relative;
   z-index: 1;
   display: grid;
-  gap: 36px;
+  gap: 24px;
   padding: 0 25px;
 }
 .observatory-sources-left { padding-right: 0; }

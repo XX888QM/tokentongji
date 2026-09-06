@@ -15,6 +15,7 @@ import fcntl
 import json
 import os
 import sqlite3
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Iterator
@@ -27,6 +28,7 @@ from .parsers import opencode as opencode_parser
 from .parsers import openclaw as openclaw_parser
 from .parsers import hermes as hermes_parser
 from .parsers import grok as grok_parser
+from .parsers import cursor as cursor_parser
 
 MAX_LINE_BYTES = 50 * 1024 * 1024
 _HEAD_SIG_BYTES = 256
@@ -222,6 +224,53 @@ def _ingest_opencode(conn) -> int:
         size=0,
         mtime=0.0,
         ctx={"last_ts_ms": max_ts_ms},
+    )
+    return added
+
+
+def _ingest_cursor(conn) -> int:
+    """拉 Cursor 仪表盘 CSV；成功后按 TOKENSTAT_CURSOR_REFRESH 节流，失败下轮再试。"""
+    if not config.CURSOR_ENABLED:
+        return 0
+    state_key = cursor_parser.CURSOR_STATE_KEY
+    state = db.get_ingest_state(conn, state_key)
+    ctx = dict((state["ctx"] or {}) if state else {})
+    last_ok = float(ctx.get("last_ok_ts") or 0)
+    now = time.time()
+    if last_ok and now - last_ok < config.CURSOR_REFRESH_SEC:
+        return 0
+    try:
+        records = cursor_parser.fetch_records(
+            config.CURSOR_STATE_DB,
+            cli_config=config.CURSOR_CLI_CONFIG,
+        )
+    except cursor_parser.CursorSkip:
+        return 0
+    except (
+        cursor_parser.CursorAuthError,
+        cursor_parser.CursorParseError,
+        cursor_parser.CursorFetchError,
+    ) as exc:
+        # 过期、表头变了或网络失败，短重试没用；记时间挡住 60s 一轮狂拉。
+        db.set_ingest_state(
+            conn,
+            state_key,
+            inode=0,
+            offset=0,
+            size=0,
+            mtime=now,
+            ctx={"last_ok_ts": now, "last_error": str(exc)[:200]},
+        )
+        raise
+    added = db.insert_records(conn, records, on_conflict="ignore") if records else 0
+    db.set_ingest_state(
+        conn,
+        state_key,
+        inode=0,
+        offset=0,
+        size=0,
+        mtime=now,
+        ctx={"last_ok_ts": now, "rows": len(records)},
     )
     return added
 
@@ -473,67 +522,69 @@ def run_once(reset_codex_forks: bool = False) -> dict:
     config.ensure_data_dir()
     lock_fd = os.open(config.DATA_DIR / "ingest.lock", os.O_CREAT | os.O_RDWR)
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        os.close(lock_fd)
-        return {"files_scanned": 0, "records_added": 0, "error": "another ingest is running"}
-    conn = db.get_conn(config.DB_PATH)
-    db.init_db(conn)
-    reset = None
-    if reset_codex_forks:
-        reset = reset_codex_fork_sessions(conn)
-    default_model = codex_parser.read_default_model()
-    files_scanned = 0
-    records_added = 0
-    errors = []
-
-    def _safe(name, fn):
         try:
-            return fn()
-        except Exception as exc:
-            errors.append(f"{name}: {exc}")
-            return 0
-
-    try:
-        for path in claude_files():
-            records_added += _safe(f"claude:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_CLAUDE, default_model))
-            files_scanned += 1
-        for path in codex_files():
-            records_added += _safe(f"codex:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_CODEX, default_model))
-            files_scanned += 1
-        for path in claude_mem_codex_usage_files():
-            records_added += _safe(f"claude-mem:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_CODEX, default_model))
-            files_scanned += 1
-        records_added += _safe("opencode", lambda: _ingest_opencode(conn))
-        records_added += _safe("hermes", lambda: _ingest_hermes(conn))
-        sqlite_paths = list(openclaw_sqlite_files())
-        # 孤立 trajectory 仍是唯一数据源，有 sqlite 也不能全局停吃；
-        # 配对删除和 sqlite 前缀和去重挡住双计。
-        for path in openclaw_files():
-            records_added += _safe(f"openclaw:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_OPENCLAW, ""))
-            files_scanned += 1
-        v3_paths = list(openclaw_v3_files())
-        for path in v3_paths:
-            records_added += _safe(f"openclaw-v3:{path.name}", lambda p=path: _ingest_openclaw_v3_file(conn, p))
-            files_scanned += 1
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"files_scanned": 0, "records_added": 0, "error": "another ingest is running"}
+        conn = db.get_conn(config.DB_PATH)
         try:
-            db.delete_openclaw_cross_format_duplicates(conn, (str(p) for p in v3_paths))
-        except Exception as exc:
-            errors.append(f"openclaw-dedup: {exc}")
-        records_added += _safe("openclaw-sqlite", lambda: _ingest_openclaw_sqlite(conn))
-        files_scanned += len(sqlite_paths)
-        for path, observer in (
-            (config.GROK_LOG_PATH, False),
-            (config.CLAUDE_MEM_GROK_LOG_PATH, True),
-        ):
-            if path.is_file():
-                records_added += _safe(
-                    f"grok:{path.name}",
-                    lambda p=path, obs=observer: _ingest_grok(conn, p, obs),
-                )
+            db.init_db(conn)
+            reset = None
+            if reset_codex_forks:
+                reset = reset_codex_fork_sessions(conn)
+            default_model = codex_parser.read_default_model()
+            files_scanned = 0
+            records_added = 0
+            errors = []
+
+            def _safe(name, fn):
+                try:
+                    return fn()
+                except Exception as exc:
+                    errors.append(f"{name}: {exc}")
+                    return 0
+
+            for path in claude_files():
+                records_added += _safe(f"claude:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_CLAUDE, default_model))
                 files_scanned += 1
+            for path in codex_files():
+                records_added += _safe(f"codex:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_CODEX, default_model))
+                files_scanned += 1
+            for path in claude_mem_codex_usage_files():
+                records_added += _safe(f"claude-mem:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_CODEX, default_model))
+                files_scanned += 1
+            records_added += _safe("opencode", lambda: _ingest_opencode(conn))
+            records_added += _safe("hermes", lambda: _ingest_hermes(conn))
+            records_added += _safe("cursor", lambda: _ingest_cursor(conn))
+            sqlite_paths = list(openclaw_sqlite_files())
+            # 孤立 trajectory 仍是唯一数据源，有 sqlite 也不能全局停吃；
+            # 配对删除和 sqlite 前缀和去重挡住双计。
+            for path in openclaw_files():
+                records_added += _safe(f"openclaw:{path.name}", lambda p=path: _ingest_file(conn, p, SOURCE_OPENCLAW, ""))
+                files_scanned += 1
+            v3_paths = list(openclaw_v3_files())
+            for path in v3_paths:
+                records_added += _safe(f"openclaw-v3:{path.name}", lambda p=path: _ingest_openclaw_v3_file(conn, p))
+                files_scanned += 1
+            try:
+                db.delete_openclaw_cross_format_duplicates(conn, (str(p) for p in v3_paths))
+            except Exception as exc:
+                errors.append(f"openclaw-dedup: {exc}")
+            records_added += _safe("openclaw-sqlite", lambda: _ingest_openclaw_sqlite(conn))
+            files_scanned += len(sqlite_paths)
+            for path, observer in (
+                (config.GROK_LOG_PATH, False),
+                (config.CLAUDE_MEM_GROK_LOG_PATH, True),
+            ):
+                if path.is_file():
+                    records_added += _safe(
+                        f"grok:{path.name}",
+                        lambda p=path, obs=observer: _ingest_grok(conn, p, obs),
+                    )
+                    files_scanned += 1
+        finally:
+            conn.close()
     finally:
-        conn.close()
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
     result = {"files_scanned": files_scanned, "records_added": records_added}
