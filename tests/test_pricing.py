@@ -354,6 +354,14 @@ class TestUnknownAndFallback(unittest.TestCase):
         pricing.clear_unknown_models()
         self.assertEqual(pricing.unknown_models(), [])
 
+    def test_placeholder_model_name_is_not_unknown(self):
+        p = pricing.load_pricing()
+        self.assertFalse(pricing.is_unknown_model("unknown", p))
+        self.assertFalse(pricing.is_unknown_model("", p))
+        pricing.clear_unknown_models()
+        pricing.rates_for_model("unknown", p)
+        self.assertNotIn("unknown", pricing.unknown_models())
+
     def test_is_unknown_model_does_not_use_global_state(self):
         p = pricing.load_pricing()
         pricing.rates_for_model("claude-known-later", {"default": p["default"], "anthropic": {}, "openai": {}})

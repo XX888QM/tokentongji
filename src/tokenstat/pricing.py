@@ -218,7 +218,7 @@ def rates_for_model(
     raw = _raw_for_model(model, pricing)
 
     if raw is None:
-        if model and model != "<synthetic>":
+        if not _is_placeholder_model(model):
             _UNKNOWN_MODELS.add(model)
         raw = default
 
@@ -251,9 +251,17 @@ def rates_for_model(
     }
 
 
+# 日志占位名，不是待补价的真实模型，审计不当「未知模型」告警。
+_PLACEHOLDER_MODELS = frozenset({"unknown", "<unknown>", "<synthetic>", "n/a", "none"})
+
+
+def _is_placeholder_model(model: str) -> bool:
+    return not (model or "").strip() or (model or "").strip().lower() in _PLACEHOLDER_MODELS
+
+
 def is_unknown_model(model: str, pricing: dict) -> bool:
     """判断模型是否缺少明确价格规则；不写入全局 unknown 状态。"""
-    if not model or model == "<synthetic>":
+    if _is_placeholder_model(model):
         return False
     return _raw_for_model(model, pricing) is None
 
