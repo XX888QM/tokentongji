@@ -30,6 +30,8 @@ _FALLBACK_PRICING = {
     "anthropic": {},
     "openai": {},
     "deepseek": {},
+    "google": {},
+    "cursor": {},
 }
 
 
@@ -73,7 +75,7 @@ def _clean_model(model: str) -> str:
 
 def _merged_models(pricing: dict) -> dict:
     out = {}
-    for section in ("anthropic", "openai", "deepseek", "xai", "local"):
+    for section in ("anthropic", "openai", "deepseek", "xai", "google", "cursor", "local"):
         out.update(pricing.get(section, {}))
     return out
 
@@ -140,6 +142,16 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
         return pick("gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5")
     if clean.startswith("grok"):
         return pick("grok-4.6", "grok-4.5", "grok-4.3", "grok-build-0.1")
+    if clean == "auto":
+        return pick("auto", "composer-2.5-fast")
+    if clean.startswith("composer"):
+        return pick("composer-2.5-fast", "composer-2.5")
+    if clean.startswith("gemini-3.7"):
+        return pick("gemini-3.7-flash", "gemini-2.5-flash")
+    if clean.startswith("gemini-2.5-flash") or clean.startswith("gemini-2.5"):
+        return pick("gemini-2.5-flash")
+    if clean.startswith("gemini"):
+        return pick("gemini-3.7-flash", "gemini-2.5-flash")
     return None
 
 

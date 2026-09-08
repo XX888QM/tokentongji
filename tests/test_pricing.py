@@ -93,6 +93,33 @@ class TestNormalization(unittest.TestCase):
         )
         self.assertFalse(pricing.is_unknown_model("gpt-6-astra", self.p))
 
+    def test_cursor_dashboard_unknowns_use_official_rates(self):
+        # 审计里这四个曾掉 default；补官方价后不能再 unknown
+        self.assertFalse(pricing.is_unknown_model("gemini-3.7-flash-high", self.p))
+        self.assertFalse(pricing.is_unknown_model("gemini-2.5-flash", self.p))
+        self.assertFalse(pricing.is_unknown_model("composer-2.5-fast", self.p))
+        self.assertFalse(pricing.is_unknown_model("auto", self.p))
+        g37 = pricing.rates_for_model("gemini-3.7-flash-high", self.p, priced_at=date(2026, 9, 9))
+        self.assertEqual(
+            (g37["input"], g37["cache_read"], g37["output"]),
+            (0.75, 0.075, 3.75),
+        )
+        g25 = pricing.rates_for_model("gemini-2.5-flash", self.p)
+        self.assertEqual(
+            (g25["input"], g25["cache_read"], g25["output"]),
+            (0.30, 0.03, 2.50),
+        )
+        fast = pricing.rates_for_model("composer-2.5-fast", self.p)
+        self.assertEqual(
+            (fast["input"], fast["cache_read"], fast["output"]),
+            (3.0, 0.50, 15.0),
+        )
+        auto = pricing.rates_for_model("auto", self.p)
+        self.assertEqual(
+            (auto["input"], auto["cache_read"], auto["output"]),
+            (fast["input"], fast["cache_read"], fast["output"]),
+        )
+
     def test_gpt56_flagship_pricing(self):
         sol = pricing.rates_for_model("gpt-5.6-sol", self.p, priced_at=date(2026, 8, 20))
         self.assertEqual(sol["input"], 5.0)
@@ -216,7 +243,7 @@ class TestNormalization(unittest.TestCase):
         sonnet = pricing.rates_for_model("claude-4.6-sonnet-medium-thinking", self.p)
         self.assertEqual(sonnet["input"], pricing.rates_for_model("claude-sonnet-4-6", self.p)["input"])
         self.assertFalse(pricing.is_unknown_model("claude-4.6-sonnet-medium-thinking", self.p))
-        self.assertTrue(pricing.is_unknown_model("composer-2.5-fast", self.p))
+        self.assertFalse(pricing.is_unknown_model("composer-2.5-fast", self.p))
 
     def test_grok_and_deepseek_aliases(self):
         build = pricing.rates_for_model("grok-build-0.1", self.p)
