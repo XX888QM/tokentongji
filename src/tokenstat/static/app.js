@@ -776,10 +776,20 @@ function projectGoPage(delta) {
   renderProjectPage();
 }
 
-async function refreshAll() {
+let refreshQueue = Promise.resolve();
+function refreshAll() {
+  // 汇率是全局值：定时/手动刷新串行，避免两轮金额渲染互相穿插。
+  refreshQueue = refreshQueue.then(refreshOnce, refreshOnce);
+  return refreshQueue;
+}
+
+async function refreshOnce() {
   try {
+    await loadRates();
     const sec = await loadSummary();
-    await Promise.all([loadRates(), loadDaily(), loadBreakdown(), loadTopSessions(), loadAudit(), loadInsights()]);
+    const results = await Promise.allSettled([loadDaily(), loadBreakdown(), loadTopSessions(), loadAudit(), loadInsights()]);
+    const failed = results.find((result) => result.status === 'rejected');
+    if (failed) throw failed.reason;
     return sec;
   } catch (e) {
     document.getElementById('meta').textContent = '加载失败: ' + e.message;
@@ -890,7 +900,6 @@ async function main() {
   setupSourceFilterClicks();
   setupSettingsInteractions();
   setupMaintenanceActions();
-  await loadRates();
   const sec = await refreshAll();
   if (refreshTimer) clearInterval(refreshTimer);
   refreshTimer = setInterval(refreshAll, (sec || 30) * 1000);

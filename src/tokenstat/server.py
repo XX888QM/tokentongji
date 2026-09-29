@@ -385,7 +385,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             if source["source"] == "hermes" and activity_date != source.get("last_date"):
                 source["collection"]["message"] = (
-                    f"最近消息 {activity_date}；累计 token 仍按会话开始日归档"
+                    f"最近消息 {activity_date}；仅有上游记录的 Token 才能入账"
                 )
             if source["collection"].get("state") == "missing":
                 data["issues"].append({

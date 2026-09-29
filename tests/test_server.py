@@ -167,7 +167,7 @@ class TestDailyEndpointFallback(unittest.TestCase):
         self.assertEqual(code, 200)
         hermes = next(source for source in body["sources"] if source["source"] == "hermes")
         self.assertEqual(hermes["activity_last_date"], today.isoformat())
-        self.assertIn("hermes 已", " ".join(i["message"] for i in body["issues"]))
+        self.assertIn("hermes 最近消息", " ".join(i["message"] for i in body["issues"]))
         self.assertEqual(audit_code, 200)
         audit_hermes = next(source for source in audit["sources"] if source["source"] == "hermes")
         self.assertEqual(audit_hermes["collection"]["state"], "active")

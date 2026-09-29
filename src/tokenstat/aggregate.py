@@ -27,6 +27,7 @@ from .models import (
     _LOCAL_TZ,
     project_display,
 )
+from .parsers.cursor import CURSOR_STATE_KEY
 
 _MILLION = 1_000_000
 
@@ -655,9 +656,16 @@ def audit(
         for s in dated:
             lag = (newest_d - date.fromisoformat(s["last_date"])).days
             if lag >= config.STALE_SOURCE_DAYS:
+                if s["source"] == "hermes" and s["activity_last_date"] > s["last_date"]:
+                    message = (
+                        f"hermes 最近消息 {s['activity_last_date']}；Token 按会话开始日归档"
+                        f"（最后 {s['last_date']}），不能仅凭日期判定漏计"
+                    )
+                else:
+                    message = f"{s['source']} 已 {lag} 天无新数据（最后 {s['last_date']}）"
                 issues.append({
                     "level": "info",
-                    "message": f"{s['source']} 已 {lag} 天无新数据（最后 {s['last_date']}）",
+                    "message": message,
                 })
     if not state["files"]:
         issues.append({"level": "warn", "message": "暂无 ingest_state，可能还没完成首次入库"})
@@ -666,7 +674,7 @@ def audit(
             "level": "info",
             "message": (
                 f"发现 {mixed_sessions_summary['session_count']} 个跨来源/模型/项目会话，"
-                f"占近 90 天用量的 {mixed_sessions_summary['pct']}%"
+                f"占近 90 天用量的 {mixed_sessions_summary['pct']}%；不代表重复计费"
             ),
         })
     if unknown_models:
@@ -696,7 +704,9 @@ def audit(
     missing_tokens = 0
     for row in conn.execute(
         "SELECT source_file, SUM(total_tokens) AS total FROM usage_events "
-        "WHERE source_file != '' GROUP BY source_file"
+        "WHERE source_file != '' AND NOT (source = 'cursor' AND source_file = ?) "
+        "GROUP BY source_file",
+        (CURSOR_STATE_KEY,),
     ):
         path = Path(row["source_file"])
         if not path.is_file():

@@ -1,10 +1,13 @@
 import time
+import tempfile
 import unittest
 from datetime import date, datetime
+from pathlib import Path
 from unittest.mock import patch
 
 from tokenstat import aggregate, db, pricing
 from tokenstat.models import _LOCAL_TZ, UsageRecord
+from tokenstat.parsers.cursor import CURSOR_STATE_KEY
 
 
 def _ts(day: str) -> int:
@@ -356,6 +359,23 @@ class TestAuditAndInsights(unittest.TestCase):
         self.assertEqual(sources["claude"]["total"], 10)
         self.assertEqual(sources["codex"]["total"], 120)
 
+    def test_audit_missing_files_skips_cursor_virtual_csv_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db.insert_records(self.conn, [
+                UsageRecord(ts=_ts("2026-06-06"), source="cursor", model="known",
+                            project="cursor", input_tokens=1000, total_tokens=1000,
+                            source_file=CURSOR_STATE_KEY, dedup_key="cursor-test"),
+                UsageRecord(ts=_ts("2026-06-06"), source="cursor", model="known",
+                            project="cursor", input_tokens=3000, total_tokens=3000,
+                            source_file=str(Path(tmp) / "missing-cursor.csv"), dedup_key="cursor-real-file-test"),
+                UsageRecord(ts=_ts("2026-06-06"), source="claude", model="known",
+                            project="/tmp/a", input_tokens=2000, total_tokens=2000,
+                            source_file=str(Path(tmp) / "deleted.jsonl"), dedup_key="deleted-test"),
+            ])
+            result = aggregate.audit(self.conn, self.pricing)
+        self.assertEqual(result["missing_source_files"]["files"], 2)
+        self.assertEqual(result["missing_source_files"]["tokens"], 5000)
+
     def test_audit_unknown_models_detail_reports_cost_and_pct(self):
         from tokenstat import pricing as pricing_mod
 
@@ -585,7 +605,7 @@ class TestStaleSourceDetection(unittest.TestCase):
         hermes = next(source for source in a["sources"] if source["source"] == "hermes")
         self.assertEqual(hermes["last_date"], "2026-06-06")
         self.assertEqual(hermes["activity_last_date"], "2026-06-20")
-        self.assertIn("hermes 已 14 天无新数据", " ".join(i["message"] for i in a["issues"]))
+        self.assertIn("hermes 最近消息 2026-06-20；Token 按会话开始日归档", " ".join(i["message"] for i in a["issues"]))
 
     def test_all_sources_stale_against_today_warns(self):
         conn = db.get_conn(":memory:")

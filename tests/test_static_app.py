@@ -25,6 +25,75 @@ console.log(JSON.stringify([9999.99, 10000, 156665.68, 1000000, 10000000, 100000
             ["¥9999.99", "¥1万", "¥15.67万", "¥100万", "¥1000万", "¥1亿"],
         )
 
+    def test_summary_and_breakdown_use_same_latest_exchange_rate(self):
+        check = """
+let summaryYuan = '';
+let detailYuan = '';
+loadRates = async () => { CNY_RATE = 6.721579; };
+loadSummary = async () => { summaryYuan = fmtCost(10); return 30; };
+loadBreakdown = async () => { detailYuan = fmtCost(10); };
+loadDaily = loadTopSessions = loadAudit = loadInsights = async () => {};
+(async () => { await refreshAll(); console.log(JSON.stringify([summaryYuan, detailYuan])); })();
+"""
+        self.assertEqual(json.loads(self._run_js(check)), ["¥67.22", "¥67.22"])
+
+    def test_overlapping_refreshes_wait_for_previous_rate_and_render(self):
+        check = """
+let releaseFirst;
+let rateCalls = 0;
+loadRates = async () => {
+  rateCalls++;
+  if (rateCalls === 1) await new Promise((resolve) => { releaseFirst = resolve; });
+};
+loadSummary = async () => 30;
+loadDaily = loadBreakdown = loadTopSessions = loadAudit = loadInsights = async () => {};
+(async () => {
+  const first = refreshAll();
+  const second = refreshAll();
+  await new Promise((resolve) => setImmediate(resolve));
+  const beforeRelease = rateCalls;
+  releaseFirst();
+  await Promise.all([first, second]);
+  console.log(JSON.stringify([beforeRelease, rateCalls]));
+})();
+"""
+        self.assertEqual(json.loads(self._run_js(check)), [1, 2])
+
+    def test_failed_refresh_waits_for_remaining_render_before_next_rate(self):
+        check = """
+let releaseDetail;
+let rateCalls = 0;
+let summaryYuan = '';
+let detailYuan = '';
+loadRates = async () => { rateCalls++; CNY_RATE = rateCalls === 1 ? 7 : 6; };
+loadSummary = async () => {
+  if (rateCalls === 2) throw Error('second summary failed');
+  summaryYuan = fmtCost(10);
+  return 30;
+};
+loadDaily = async () => { if (rateCalls === 1) throw Error('first daily failed'); };
+loadBreakdown = async () => {
+  if (rateCalls === 1) {
+    await new Promise((resolve) => { releaseDetail = resolve; });
+    detailYuan = fmtCost(10);
+  }
+};
+loadTopSessions = loadAudit = loadInsights = async () => {};
+global.document = { getElementById() { return { textContent: '' }; } };
+setHeaderHealth = () => {};
+(async () => {
+  const first = refreshAll();
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = refreshAll();
+  await new Promise((resolve) => setImmediate(resolve));
+  const beforeRelease = rateCalls;
+  releaseDetail();
+  await Promise.all([first, second]);
+  console.log(JSON.stringify([beforeRelease, summaryYuan, detailYuan]));
+})();
+"""
+        self.assertEqual(json.loads(self._run_js(check)), [1, "¥70.00", "¥70.00"])
+
     def test_alert_day_uses_shanghai_date(self):
         check = """
 console.log(JSON.stringify([

@@ -84,6 +84,21 @@ def _raw_for_model(model: str, pricing: dict) -> Optional[dict]:
     """按既有归一化规则找到原始价目；未知模型返回 None。"""
     models = _merged_models(pricing)
     clean = _clean_model(model)
+    if clean.startswith("claude-opus-"):
+        if clean in models:
+            return models[clean]
+        if clean == "claude-opus-4-20":
+            return models.get("claude-opus-4-0")
+        known_suffixes = {"low", "thinking-xhigh", "thinking-high", "thinking-max-fast", "thinking-max"}
+        for known in sorted((m for m in models if m.startswith("claude-opus-")), key=len, reverse=True):
+            if clean.startswith(known + "-") and clean[len(known) + 1:] in known_suffixes:
+                return models[known]
+        return None  # 未核价的新版本不能静默继承更便宜的 Opus 5.5
+    # Grok 4.7 Fast 是独立价档；先挡住未知 Fast 变体，不能被通用前缀截走。
+    if clean.startswith("grok-4.7") and "-fast" in clean:
+        if clean in ("grok-4.7-fast", "grok-4.7-build-fast", "grok-4.7-xhigh-fast", "grok-4.7-high-fast"):
+            return models.get("grok-4.7-fast")
+        return None
     if clean in models:
         return models[clean]
 
@@ -118,7 +133,7 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
     if clean.startswith("claude-sonnet-4-20"):
         return pick("claude-sonnet-4-0")
     if clean.startswith("claude-opus"):
-        return pick("claude-opus-5", "claude-opus-4-8", "claude-opus-4-7")
+        return pick("claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7")
     if clean.startswith("claude-sonnet"):
         return pick("claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5")
     if clean.startswith(("claude-4.6-sonnet", "claude-4-6-sonnet")):
@@ -128,7 +143,7 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
     if clean.startswith("gpt-5-codex") or clean == "codex-auto-review":
         return pick("gpt-5.3-codex", "gpt-5-codex")
     if clean.startswith("gpt-6"):
-        return pick("gpt-6-astra")
+        return pick("gpt-6-astra", "gpt-6-sol", "gpt-6-luna")
     if clean.startswith("gpt-5.6-sol") or clean.startswith("gpt-daybreak-blue"):
         return pick("gpt-daybreak-blue", "gpt-5.6-sol", "gpt-5.5")
     if clean.startswith("gpt-5.6-terra"):
@@ -141,7 +156,7 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
         # gpt-5.x 未精确命中时：优先新 flagship，再退基础款
         return pick("gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5")
     if clean.startswith("grok"):
-        return pick("grok-4.6", "grok-4.5", "grok-4.3", "grok-build-0.1")
+        return pick("grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3", "grok-build-0.1")
     if clean == "auto":
         return pick("auto", "composer-2.5-fast")
     if clean.startswith("composer"):

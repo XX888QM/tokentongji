@@ -55,6 +55,7 @@ PYTHONPATH=src python3 -m unittest tests.test_pricing.TestNormalization.test_son
 
 ## 关键约定
 
+- **定价兜底例外**：Claude Opus 仅认价表中的已知版本及明确观察到的后缀；未知新版本（如 `claude-opus-6`、`claude-opus-5-6`）标为未知模型，不继承 Opus 5.5 的较低单价。
 - **Token 归一化口径**：`input_tokens` 是已剔除缓存命中的全价输入；`cache_read_tokens`/`cache_creation_tokens` 分开算；reasoning token 是否并入 output 因来源而异（Codex / Grok / Hermes 已是 output 子集，不重复相加；OpenCode 单独存字段，只在展示/计费时并入，见 `aggregate._row_output`）。改计费或展示逻辑前先确认没有破坏这个口径。
 - **claude-mem 展示口径**：它是物理 Codex/Grok 内的 virtual display source，不是第八个物理来源（Cursor 才是第七个物理来源）。接口的 `by_source.codex` / `by_source.grok` 用于审计；页面统一消费 `by_display_source` 和带 `collector` 的行。任何新增页面/导出都必须复用同一个分类条件，不能在前端自行猜或把展示来源重复加回物理总数。
 - **时区固定 Asia/Shanghai**（UTC+8，无夏令时）。`models.py` 里同时实现了 zoneinfo 优先 + 固定偏移兜底两套，保证在缺 tzdata 的环境也能零依赖运行。

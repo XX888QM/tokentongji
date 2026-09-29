@@ -15,14 +15,25 @@ class TestNormalization(unittest.TestCase):
             self.assertEqual(r["input"], 5.0, m)
             self.assertEqual(r["output"], 25.0, m)
 
-    def test_opus_5_has_explicit_entry_and_leads_family_fallback(self):
+    def test_opus_5_and_newer_versions_do_not_silently_share_a_price(self):
         # 显式条目，非兜底命中
         self.assertFalse(pricing.is_unknown_model("claude-opus-5", self.p))
         self.assertIn("claude-opus-5", self.p["anthropic"])
-        # 未来 opus 版本走家族兜底时应退到 opus-5（最新），而非旧版
-        r = pricing.rates_for_model("claude-opus-6", self.p)
-        self.assertEqual(r["input"], self.p["anthropic"]["claude-opus-5"]["input"])
-        self.assertEqual(r["output"], self.p["anthropic"]["claude-opus-5"]["output"])
+        # 未核价的未来版本必须亮审计告警，不得继承更便宜的 Opus 5.5
+        self.assertTrue(pricing.is_unknown_model("claude-opus-6", self.p))
+        self.assertTrue(pricing.is_unknown_model("claude-opus-5-6", self.p))
+        for model in ("claude-opus-v6", "claude-opus-5.6", "claude-opus-5-006", "claude-opus-5-6beta", "claude-opus-" + "9" * 5000):
+            self.assertTrue(pricing.is_unknown_model(model, self.p), model[:40])
+        self.assertEqual(pricing.rates_for_model("claude-opus-5-thinking-max-fast", self.p)["input"], 5.0)
+        self.assertEqual(pricing.rates_for_model("claude-opus-4-20", self.p)["input"], 15.0)
+
+    def test_opus_5_5_pricing(self):
+        rates = pricing.rates_for_model("claude-opus-5-5", self.p)
+        self.assertEqual(
+            (rates["input"], rates["cache_read"], rates["cache_write"], rates["output"]),
+            (4.0, 0.20, 5.0, 20.0),
+        )
+        self.assertEqual(pricing.rates_for_model("claude-opus-5-5", self.p, cache_window="1h")["cache_write"], 8.0)
 
     def test_opus_old_pricing(self):
         r = pricing.rates_for_model("claude-opus-4-1", self.p)
@@ -92,6 +103,19 @@ class TestNormalization(unittest.TestCase):
             (20.0, 2.0, 25.0, 75.0),
         )
         self.assertFalse(pricing.is_unknown_model("gpt-6-astra", self.p))
+
+    def test_gpt6_sol_luna_have_own_short_and_long_prices(self):
+        for model, short, long in (
+            ("gpt-6-sol", (2.0, 0.20, 2.50, 10.0), (4.0, 0.40, 5.0, 15.0)),
+            ("gpt-6-luna", (0.10, 0.01, 0.125, 0.50), (0.20, 0.02, 0.25, 0.75)),
+        ):
+            self.assertIn(model, self.p["openai"])
+            rates = pricing.rates_for_model(model, self.p, cache_window="30m")
+            long_rates = pricing.rates_for_model(model, self.p, cache_window="30m", long_context=True)
+            keys = ("input", "cache_read", "cache_write", "output")
+            self.assertEqual(tuple(rates[k] for k in keys), short)
+            self.assertEqual(tuple(long_rates[k] for k in keys), long)
+            self.assertEqual(pricing.long_context_threshold_for_model(model, self.p), 272000)
 
     def test_cursor_dashboard_unknowns_use_official_rates(self):
         # 审计里这四个曾掉 default；补官方价后不能再 unknown
@@ -215,9 +239,28 @@ class TestNormalization(unittest.TestCase):
         long = pricing.rates_for_model("grok-4.6", self.p, long_context=True)
         self.assertEqual((long["input"], long["cache_read"], long["output"]), (4.0, 1.00, 12.0))
         self.assertFalse(pricing.is_unknown_model("grok-4.6", self.p))
-        # 家族兜底应指向最新的 4.6，而不是旧版本
-        future = pricing.rates_for_model("grok-4.7", self.p)
+        # 家族兜底应指向最新的 4.7，而不是旧版本
+        future = pricing.rates_for_model("grok-5-future", self.p)
         self.assertEqual((future["input"], future["cache_read"], future["output"]), (2.0, 0.50, 6.0))
+
+    def test_grok_4_7_fast_does_not_fall_back_to_standard(self):
+        standard = pricing.rates_for_model("grok-4.7", self.p)
+        self.assertEqual((standard["input"], standard["cache_read"], standard["output"]), (2.0, 0.50, 6.0))
+        for model in ("grok-4.7-build-fast", "grok-4.7-xhigh-fast", "cursor-grok-4.7-high-fast"):
+            rates = pricing.rates_for_model(model, self.p)
+            long = pricing.rates_for_model(model, self.p, long_context=True)
+            self.assertEqual((rates["input"], rates["cache_read"], rates["output"]), (4.0, 1.0, 12.0))
+            self.assertEqual((long["input"], long["cache_read"], long["output"]), (6.0, 1.5, 18.0))
+            self.assertEqual(pricing.long_context_threshold_for_model(model, self.p), 200000)
+        for unverified in ("grok-4.7-unverified-fast", "grok-4.7-fast-preview", "grok-4.7-high-fast-v2"):
+            self.assertTrue(pricing.is_unknown_model(unverified, self.p))
+
+    def test_local_qwen_does_not_get_default_cloud_price(self):
+        model = "qwen3.8:27b-mlx-bf16"
+        self.assertIn(model, self.p["local"])
+        self.assertFalse(pricing.is_unknown_model(model, self.p))
+        rates = pricing.rates_for_model(model, self.p)
+        self.assertEqual((rates["input"], rates["cache_read"], rates["output"]), (0.0, 0.0, 0.0))
 
     def test_grok_pricing(self):
         r = pricing.rates_for_model("grok-4.5", self.p)
