@@ -196,9 +196,19 @@ def _load_audit() -> dict:
     pricing = pricing_mod.load_pricing()
     conn = db.get_conn(config.DB_PATH)
     try:
-        return aggregate.audit(conn, pricing, activity_dates=_source_activity_dates())
+        return aggregate.audit(conn, pricing, activity_dates=_source_activity_dates(),
+                               inactive_sources=_uninstalled_sources())
     finally:
         conn.close()
+
+
+def _uninstalled_sources() -> set[str]:
+    result = set()
+    if not config.HERMES_STATE_DB.parent.exists():
+        result.add("hermes")
+    if not config.OPENCLAW_AGENTS_DIR.parent.exists() and not config.OPENCLAW_SESSION_DIR.exists():
+        result.add("openclaw")
+    return result
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -383,6 +393,8 @@ class Handler(BaseHTTPRequestHandler):
             source["collection"] = _source_collection_status(
                 source["source"], path_available.get(source["source"], False), activity_date
             )
+            if source["source"] in _uninstalled_sources():
+                source["collection"] = {"state": "uninstalled", "message": "未安装，历史数据仍保留"}
             if source["source"] == "hermes" and activity_date != source.get("last_date"):
                 source["collection"]["message"] = (
                     f"最近消息 {activity_date}；仅有上游记录的 Token 才能入账"

@@ -552,7 +552,7 @@ async function loadAudit() {
   for (const s of (a.sources || [])) {
     const collection = s.collection || {};
     const stateLabel = {
-      active: '近期已采集', idle: '近期无新增', missing: '路径缺失', waiting: '等待数据',
+      active: '近期已采集', idle: '近期无新增', missing: '路径缺失', waiting: '等待数据', uninstalled: '未安装',
     }[collection.state] || '状态未知';
     sources.push(kv(
       s.source,

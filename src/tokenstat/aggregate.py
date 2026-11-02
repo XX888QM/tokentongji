@@ -472,6 +472,7 @@ def audit(
     conn: sqlite3.Connection,
     pricing: Optional[dict] = None,
     activity_dates: Optional[dict[str, str]] = None,
+    inactive_sources: Optional[set[str]] = None,
 ) -> dict:
     """审计数据完整性与统计口径风险。"""
     if pricing is None:
@@ -654,6 +655,8 @@ def audit(
         # 单来源落后用 token 归档日，不用 Hermes 聊天心跳。分不清是采集故障还是
         # 用户没用该工具，只作 info，不升级为 warn。
         for s in dated:
+            if s["source"] in (inactive_sources or set()):
+                continue
             lag = (newest_d - date.fromisoformat(s["last_date"])).days
             if lag >= config.STALE_SOURCE_DAYS:
                 if s["source"] == "hermes" and s["activity_last_date"] > s["last_date"]:

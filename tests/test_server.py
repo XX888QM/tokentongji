@@ -145,6 +145,36 @@ class TestDailyEndpointFallback(unittest.TestCase):
         self.assertIn("status", body)
         self.assertIn("db", body)
 
+    def test_uninstalled_sources_retain_history_without_missing_path_warning(self):
+        conn = db.get_conn(self._db_path)
+        try:
+            db.insert_records(conn, [
+                UsageRecord(ts=1_780_000_000, source=source, model="known", project="/tmp",
+                            input_tokens=10, total_tokens=10, dedup_key=source)
+                for source in ("hermes", "openclaw")
+            ])
+        finally:
+            conn.close()
+        with patch("tokenstat.server._uninstalled_sources", return_value={"hermes", "openclaw"}):
+            code, body = _call_get("/api/audit", self._db_path)
+        self.assertEqual(code, 200)
+        sources = {row["source"]: row for row in body["sources"]}
+        for source in ("hermes", "openclaw"):
+            self.assertEqual(sources[source]["total"], 10)
+            self.assertEqual(sources[source]["collection"]["state"], "uninstalled")
+            self.assertFalse(any(source in issue["message"] for issue in body["issues"]))
+
+    def test_installed_hermes_with_missing_database_still_warns(self):
+        conn = db.get_conn(self._db_path)
+        try:
+            db.insert_records(conn, [UsageRecord(ts=1_780_000_000, source="hermes", model="known", project="/tmp", input_tokens=10, total_tokens=10, dedup_key="hermes")])
+        finally:
+            conn.close()
+        with patch("tokenstat.config.HERMES_STATE_DB", Path(self._tmpdir.name) / "missing.db"):
+            code, body = _call_get("/api/audit", self._db_path)
+        self.assertEqual(code, 200)
+        self.assertTrue(any("hermes 采集路径不存在" in issue["message"] for issue in body["issues"]))
+
     def test_health_uses_hermes_message_activity_for_staleness(self):
         conn = db.get_conn(self._db_path)
         try:
@@ -161,7 +191,7 @@ class TestDailyEndpointFallback(unittest.TestCase):
         finally:
             conn.close()
         with patch("tokenstat.aggregate._today_local", return_value=today):
-            with patch("tokenstat.server.hermes_parser.latest_activity_ts", return_value=base):
+            with patch("tokenstat.server.hermes_parser.latest_activity_ts", return_value=base), patch("tokenstat.server._uninstalled_sources", return_value=set()), patch("tokenstat.config.HERMES_STATE_DB", Path(self._db_path)):
                 code, body = _call_get("/api/health", self._db_path)
                 audit_code, audit = _call_get("/api/audit", self._db_path)
         self.assertEqual(code, 200)

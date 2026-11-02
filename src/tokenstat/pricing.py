@@ -85,6 +85,8 @@ def _raw_for_model(model: str, pricing: dict) -> Optional[dict]:
     models = _merged_models(pricing)
     clean = _clean_model(model)
     if clean.startswith("claude-opus-"):
+        if clean == "claude-opus-5-5-high-fast":
+            return models.get("claude-opus-5-5-fast")
         if clean in models:
             return models[clean]
         if clean == "claude-opus-4-20":

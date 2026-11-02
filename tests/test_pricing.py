@@ -35,6 +35,11 @@ class TestNormalization(unittest.TestCase):
         )
         self.assertEqual(pricing.rates_for_model("claude-opus-5-5", self.p, cache_window="1h")["cache_write"], 8.0)
 
+    def test_cursor_opus_5_5_fast(self):
+        rates = pricing.rates_for_model("claude-opus-5-5-high-fast", self.p)
+        self.assertFalse(pricing.is_unknown_model("claude-opus-5-5-high-fast", self.p))
+        self.assertEqual((rates["input"], rates["cache_read"], rates["cache_write"], rates["output"]), (8, 0.4, 10, 40))
+
     def test_opus_old_pricing(self):
         r = pricing.rates_for_model("claude-opus-4-1", self.p)
         self.assertEqual(r["input"], 15.0)
