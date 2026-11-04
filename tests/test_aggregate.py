@@ -734,6 +734,41 @@ class TestClaudeMemSummary(unittest.TestCase):
 
 
 class TestCacheCreationCostPath(unittest.TestCase):
+    def test_summary_daily_and_breakdown_include_1h_cache_write(self):
+        conn = db.get_conn(":memory:")
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(
+                    ts=_ts("2026-06-06"),
+                    source="claude",
+                    model="claude-sonnet-5",
+                    project="/tmp/claude-1h",
+                    cache_creation_tokens=700,
+                    cache_creation_1h_tokens=300,
+                    dedup_key="claude-cache-1h",
+                ),
+            ])
+            with patch("tokenstat.aggregate._today_local", return_value=date(2026, 6, 6)):
+                summary = aggregate.summary(conn)
+                daily = aggregate.daily(conn, days=1)
+                breakdown = aggregate.breakdown(conn, "today")
+        finally:
+            conn.close()
+
+        self.assertEqual(summary["periods"]["today"]["total"], 1000)
+        self.assertEqual(daily["days"][0]["date"], "2026-06-06")
+        self.assertEqual(daily["days"][0]["total"], 1000)
+        self.assertEqual(summary["periods"]["today"]["total"], daily["days"][0]["total"])
+        self.assertEqual(breakdown["by_model"][0]["cache_creation"], 1000)
+        self.assertEqual(
+            breakdown["by_model"][0]["input"]
+            + breakdown["by_model"][0]["output"]
+            + breakdown["by_model"][0]["cache_read"]
+            + breakdown["by_model"][0]["cache_creation"],
+            breakdown["by_model"][0]["total"],
+        )
+
     def test_grouped_row_does_not_subtract_1h_from_5m(self):
         # parser 存的是 5m-only + 1h-only；聚合 SUM 后原样交给 cost_for。
         row = {

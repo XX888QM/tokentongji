@@ -541,7 +541,22 @@ def run_once(reset_codex_forks: bool = False) -> dict:
                 try:
                     return fn()
                 except Exception as exc:
-                    errors.append(f"{name}: {exc}")
+                    # commit=False 的删除还挂在这条连接上。不回滚的话，后面任一
+                    # commit（包括 set_ingest_state）会把它落盘，而失败来源的
+                    # offset 不前进，旧行会丢、新行进不来。
+                    rollback_error = None
+                    for _ in range(2):
+                        try:
+                            conn.rollback()
+                        except Exception as rb_exc:
+                            rollback_error = rb_exc
+                        else:
+                            rollback_error = None
+                            break
+                    text = f"{name}: {exc}"
+                    if rollback_error is not None:
+                        text += f" (rollback failed: {rollback_error})"
+                    errors.append(text)
                     return 0
 
             for path in claude_files():

@@ -246,6 +246,7 @@ tfoot tr.tfoot-total td { border-top: 1px solid rgba(230,199,122,.35); border-bo
 .badge.openclaw { color: var(--openclaw); background: rgba(213,138,203,.06); }
 .badge.hermes { color: var(--hermes); background: rgba(105,199,220,.06); }
 .badge.grok { color: var(--grok); background: rgba(226,187,98,.06); }
+.badge.cursor { color: #7b8cff; background: rgba(123,140,255,.06); }
 .session-link { padding: 0; border: 0; background: none; color: var(--gold); cursor: pointer; font: inherit; text-decoration: underline; text-decoration-color: rgba(230,199,122,.25); text-underline-offset: 3px; }
 .session-link:hover { text-decoration-color: var(--gold); }
 .pager { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 12px; }

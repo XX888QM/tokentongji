@@ -137,11 +137,11 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
     if clean.startswith("claude-opus"):
         return pick("claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "claude-opus-4-7")
     if clean.startswith("claude-sonnet"):
-        return pick("claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5")
+        return pick("claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5")
     if clean.startswith(("claude-4.6-sonnet", "claude-4-6-sonnet")):
         return pick("claude-sonnet-4-6")
     if clean.startswith("claude-haiku"):
-        return pick("claude-haiku-4-5")
+        return pick("claude-haiku-5-5", "claude-haiku-4-5")
     if clean.startswith("gpt-5-codex") or clean == "codex-auto-review":
         return pick("gpt-5.3-codex", "gpt-5-codex")
     if clean.startswith("gpt-6"):

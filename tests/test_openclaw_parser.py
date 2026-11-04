@@ -74,15 +74,16 @@ class TestV3Format(unittest.TestCase):
     def _session(self, sid="sid-1", cwd="/proj"):
         return {"type": "session", "id": sid, "cwd": cwd}
 
-    def _msg(self, mid="m1", inp=100, out=50, total=150, ts_ms=1_700_000_000_000):
+    def _msg(self, mid="m1", inp=100, out=50, total=150, ts_ms=1_700_000_000_000,
+             cache_read=0, cache_write=0):
         return {
             "type": "message",
             "id": mid,
             "message": {
                 "role": "assistant",
                 "model": "claude-opus-4-7",
-                "usage": {"input": inp, "output": out, "cacheRead": 0,
-                          "cacheWrite": 0, "totalTokens": total},
+                "usage": {"input": inp, "output": out, "cacheRead": cache_read,
+                          "cacheWrite": cache_write, "totalTokens": total},
                 "timestamp": ts_ms,
             },
         }
@@ -124,6 +125,90 @@ class TestV3Format(unittest.TestCase):
         msg["message"]["model"] = 42
         rec = openclaw.parse_v3_record(msg, "/f", 0, ctx)
         self.assertEqual(rec.model, "unknown")
+
+    def test_cumulative_snapshot_excluded_from_prefix(self):
+        ctx = {}
+        self.assertIsNone(openclaw.parse_v3_record(self._session(), "/f", 0, ctx))
+        first = openclaw.parse_v3_record(
+            self._msg("m1", inp=100, out=40, cache_read=10, cache_write=5, total=155),
+            "/f", 1, ctx,
+        )
+        second = openclaw.parse_v3_record(
+            self._msg("m2", inp=30, out=7, cache_read=4, cache_write=1, total=42,
+                      ts_ms=1_700_000_001_000),
+            "/f", 2, ctx,
+        )
+        # 前缀和 130/47/14/6；total 沿用上一条的 42，不等于自身四分量之和 197。
+        tail = openclaw.parse_v3_record(
+            self._msg("m3", inp=130, out=47, cache_read=14, cache_write=6, total=42,
+                      ts_ms=1_700_000_002_000),
+            "/f", 3, ctx,
+        )
+        self.assertEqual(first.dedup_key, "openclaw-v3:m1")
+        self.assertEqual(second.dedup_key, "openclaw-v3:m2")
+        self.assertIsNone(tail)
+        self.assertEqual(
+            (ctx["prefix_input"], ctx["prefix_output"],
+             ctx["prefix_cache_read"], ctx["prefix_cache_write"]),
+            (130, 47, 14, 6),
+        )
+
+    def test_identical_calls_with_component_total_both_kept(self):
+        ctx = {}
+        openclaw.parse_v3_record(self._session(), "/f", 0, ctx)
+        first = openclaw.parse_v3_record(
+            self._msg("m1", inp=100, out=50, cache_read=8, cache_write=2, total=160),
+            "/f", 1, ctx,
+        )
+        second = openclaw.parse_v3_record(
+            self._msg("m2", inp=100, out=50, cache_read=8, cache_write=2, total=160,
+                      ts_ms=1_700_000_001_000),
+            "/f", 2, ctx,
+        )
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        self.assertEqual(second.dedup_key, "openclaw-v3:m2")
+        self.assertEqual(second.input_tokens, 100)
+        self.assertEqual(second.output_tokens, 50)
+        self.assertEqual(second.cache_read_tokens, 8)
+        self.assertEqual(second.cache_creation_tokens, 2)
+        self.assertEqual(second.total_tokens, 160)
+        self.assertEqual(
+            (ctx["prefix_input"], ctx["prefix_output"],
+             ctx["prefix_cache_read"], ctx["prefix_cache_write"]),
+            (200, 100, 16, 4),
+        )
+
+    def test_session_event_clears_prefix_for_next_session(self):
+        ctx = {}
+        openclaw.parse_v3_record(self._session("s1", "/a"), "/f", 0, ctx)
+        openclaw.parse_v3_record(
+            self._msg("a1", inp=10, out=4, cache_read=1, cache_write=1, total=16),
+            "/f", 1, ctx,
+        )
+        openclaw.parse_v3_record(
+            self._msg("a2", inp=7, out=3, cache_read=2, cache_write=1, total=13,
+                      ts_ms=1_700_000_001_000),
+            "/f", 2, ctx,
+        )
+        # 前缀和 17/7/3/2。不清零的话，下一条 total=13 不等于 29，会被当成累计尾丢掉。
+        self.assertIsNone(openclaw.parse_v3_record(self._session("s2", "/b"), "/f", 3, ctx))
+        self.assertEqual(
+            (ctx["prefix_input"], ctx["prefix_output"],
+             ctx["prefix_cache_read"], ctx["prefix_cache_write"]),
+            (0, 0, 0, 0),
+        )
+        rec = openclaw.parse_v3_record(
+            self._msg("b1", inp=17, out=7, cache_read=3, cache_write=2, total=13,
+                      ts_ms=1_700_000_002_000),
+            "/f", 4, ctx,
+        )
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec.session_id, "s2")
+        self.assertEqual(rec.project, "/b")
+        self.assertEqual(rec.input_tokens, 17)
+        self.assertEqual(rec.total_tokens, 13)
+        self.assertEqual(ctx["prefix_input"], 17)
 
 
 class TestSqliteFetch(unittest.TestCase):

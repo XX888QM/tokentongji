@@ -7,9 +7,9 @@
     "source_xai": "https://docs.x.ai/developers/pricing",
     "source_google": "https://ai.google.dev/gemini-api/docs/pricing",
     "source_cursor": "https://cursor.com/docs/models-and-pricing",
-    "fetched_date": "2026-09-09",
-    "verified_date": "2026-09-09",
-    "note": "本表按官方公开 API 单价折算；订阅制（Claude Max / Codex / Grok / Cursor 套餐）下 token 不直接对应扣费，仅供参考。GPT-6 Astra 于 2026-09-04 核验：$10/$1/$12.5/$50（input/cache_read/cache_write/output），272K 以上 prompt 全请求按 2x input/cache 与 1.5x output。Grok 4.5 cache_read $0.30、Grok 4.6 cache_read $0.50，均按 xAI 官方价格表登记。grok-latest 于 2026-07-20 核验为 grok-4.3。Claude Sonnet 5 原定 2026-09-01 涨价已被官方取消，$2/$10 即标准价。GPT-5.6 Sol 于 2026-08-21 降价（$5/$30 → $4/$20），历史行按当日价分段计。gpt-daybreak-blue / gpt-daybreak-blue-latest 官方别名指向 gpt-5.6-sol，单价与 Sol 相同（含 2026-08-21 降价）。Claude Fable 5.1 / Mythos 5.1 于 2026-09-02 核验：input/output/cache_write 同 5 代不变，cache_read 降为 $0.25（0.025x base input，5 代是 0.1x 的 $1）。Gemini 2.5 Flash 官方 $0.30/$0.03/$2.50；Gemini 3.7 Flash 官方至 2026-12-31 为 $0.75/$0.075/$3.75（含 thinking），gemini-3.7-flash-high 走同一档。Composer 2.5 Fast 按 Cursor 公开价 $3/$0.50/$15。Cursor Auto 日志不带实际路由模型，按产品默认 Fast（Composer 2.5 Fast）估算。长上下文价仅在能取得单次请求完整 prompt token 数的来源启用。"
+    "fetched_date": "2026-11-04",
+    "verified_date": "2026-11-04",
+    "note": "本表按官方公开 API 单价折算；订阅制（Claude Max / Codex / Grok / Cursor 套餐）下 token 不直接对应扣费，仅供参考。GPT-6 Astra 于 2026-09-04 核验：$10/$1/$12.5/$50（input/cache_read/cache_write/output），272K 以上 prompt 全请求按 2x input/cache 与 1.5x output。Grok 4.5 cache_read $0.30、Grok 4.6 cache_read $0.50，均按 xAI 官方价格表登记。grok-latest 于 2026-07-20 核验为 grok-4.3。Claude Sonnet 5 原定 2026-09-01 涨价已被官方取消，$2/$10 即标准价。GPT-5.6 Sol 于 2026-08-21 降价（$5/$30 → $4/$20），历史行按当日价分段计。gpt-daybreak-blue / gpt-daybreak-blue-latest 官方别名指向 gpt-5.6-sol，单价与 Sol 相同（含 2026-08-21 降价）。Claude Fable 5.1 / Mythos 5.1 于 2026-09-02 核验：input/output/cache_write 同 5 代不变，cache_read 降为 $0.25（0.025x base input，5 代是 0.1x 的 $1）。Gemini 2.5 Flash 官方 $0.30/$0.03/$2.50；Gemini 3.7 Flash 官方至 2026-12-31 为 $0.75/$0.075/$3.75（含 thinking），gemini-3.7-flash-high 走同一档。Composer 2.5 Fast 按 Cursor 公开价 $3/$0.50/$15。Cursor Auto 日志不带实际路由模型，按产品默认 Fast（Composer 2.5 Fast）估算。长上下文价仅在能取得单次请求完整 prompt token 数的来源启用。Claude Sonnet 5.5 于 2026-09-28 上线，缓存读 $0.20；2026-10-07 降为 $0.10，历史行按当日价分段。Claude Haiku 5.5 于 2026-10-07 核验：10 万 token 以内 $0.10/$0.01/$0.125/$0.20/$0.50，超过按 100000 长上下文档 $0.50/$0.05/$0.625/$1/$2.50（input/cache_read/cache_write_5m/cache_write_1h/output）。"
   },
   "default": { "input": 5.0, "output": 25.0, "cache_read": 0.5, "cache_write_5m": 6.25, "cache_write_1h": 10.0 },
   "anthropic": {
@@ -26,10 +26,24 @@
     "claude-opus-4-5":   { "input": 5.0,  "output": 25.0, "cache_read": 0.50, "cache_write_5m": 6.25,  "cache_write_1h": 10.0 },
     "claude-opus-4-1":   { "input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write_5m": 18.75, "cache_write_1h": 30.0 },
     "claude-opus-4-0":   { "input": 15.0, "output": 75.0, "cache_read": 1.50, "cache_write_5m": 18.75, "cache_write_1h": 30.0 },
+    "claude-sonnet-5-5": {
+      "input": 2.0, "output": 10.0, "cache_read": 0.20, "cache_write_5m": 2.50, "cache_write_1h": 4.0,
+      "next_pricing": {
+        "starts_on": "2026-10-07",
+        "cache_read": 0.10
+      }
+    },
     "claude-sonnet-5":   { "input": 2.0,  "output": 10.0, "cache_read": 0.20, "cache_write_5m": 2.50,  "cache_write_1h": 4.0 },
     "claude-sonnet-4-6": { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
     "claude-sonnet-4-5": { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
     "claude-sonnet-4-0": { "input": 3.0,  "output": 15.0, "cache_read": 0.30, "cache_write_5m": 3.75,  "cache_write_1h": 6.0 },
+    "claude-haiku-5-5": {
+      "input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write_5m": 0.125, "cache_write_1h": 0.20,
+      "long_context": {
+        "threshold": 100000,
+        "input": 0.50, "output": 2.50, "cache_read": 0.05, "cache_write_5m": 0.625, "cache_write_1h": 1.0
+      }
+    },
     "claude-haiku-4-5":  { "input": 1.0,  "output": 5.0,  "cache_read": 0.10, "cache_write_5m": 1.25,  "cache_write_1h": 2.0 }
   },
   "deepseek": {

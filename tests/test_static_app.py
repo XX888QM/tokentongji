@@ -123,7 +123,7 @@ console.log(JSON.stringify({
         self.assertEqual(rendered["display"], "1243.85万")
         self.assertEqual(
             rendered["badge"],
-            '<span class="badge claude_mem" data-source="claude_mem">claude-mem</span>',
+            '<span class="badge claude-mem" data-source="claude_mem">claude-mem</span>',
         )
         self.assertIn('1243.85万', rendered["hero"])
         self.assertNotIn('split-row claude-mem', rendered["hero"])
@@ -293,6 +293,40 @@ getJSON = async () => ({
         self.assertEqual(totals["model"], "")
         self.assertIn("合计", totals["project"])
         self.assertIn("123", totals["project"])
+
+    def test_stale_period_cache_does_not_rerender_and_badge_class_matches_css(self):
+        check = """
+let breakdownRenders = 0;
+let sessionRenders = 0;
+renderBreakdown = () => { breakdownRenders++; };
+renderTopSessions = () => { sessionRenders++; };
+renderSourceFilterChip = () => {};
+currentPeriod = 'week';
+lastBreakdownData = { period: 'today', by_model: [], by_project: [] };
+lastTopSessionsData = { period: 'today', sessions: [] };
+toggleSourceFilter('codex');
+const stale = [breakdownRenders, sessionRenders];
+lastBreakdownData = { period: 'week', by_model: [], by_project: [] };
+lastTopSessionsData = { sessions: [] };
+toggleSourceFilter('claude');
+const fresh = [breakdownRenders, sessionRenders];
+const html = badge('claude_mem', 'claude-mem');
+console.log(JSON.stringify({
+  stale,
+  fresh,
+  badgeClass: html.includes('class="badge claude-mem"'),
+  dataSource: html.includes('data-source="claude_mem"'),
+  rawClass: html.includes('class="badge claude_mem"'),
+}));
+"""
+        rendered = json.loads(self._run_js(check))
+        self.assertEqual(rendered["stale"], [0, 0])
+        self.assertEqual(rendered["fresh"], [1, 1])
+        self.assertTrue(rendered["badgeClass"])
+        self.assertTrue(rendered["dataSource"])
+        self.assertFalse(rendered["rawClass"])
+        css = (Path(__file__).parents[1] / "src/tokenstat/static/styles.css").read_text()
+        self.assertIn(".badge.cursor { color: #7b8cff; background: rgba(123,140,255,.06); }", css)
 
 
 if __name__ == "__main__":

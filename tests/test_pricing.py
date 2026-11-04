@@ -62,6 +62,37 @@ class TestNormalization(unittest.TestCase):
             )
             self.assertEqual(r1h["cache_write"], 4.0, when)
 
+    def test_sonnet_5_5_cache_read_drops_on_2026_10_07(self):
+        before = pricing.rates_for_model("claude-sonnet-5-5", self.p, priced_at=date(2026, 10, 6))
+        after = pricing.rates_for_model("claude-sonnet-5-5", self.p, priced_at=date(2026, 10, 7))
+        self.assertEqual(before["cache_read"], 0.20)
+        self.assertEqual(after["cache_read"], 0.10)
+        self.assertEqual((before["input"], before["output"]), (2.0, 10.0))
+        self.assertEqual((after["input"], after["output"]), (2.0, 10.0))
+        self.assertFalse(pricing.is_unknown_model("claude-sonnet-5-5", self.p))
+        high = pricing.rates_for_model(
+            "claude-sonnet-5-5-high", self.p, priced_at=date(2026, 10, 7)
+        )
+        self.assertEqual(high["cache_read"], 0.10)
+        self.assertEqual((high["input"], high["output"]), (2.0, 10.0))
+        sonnet5 = pricing.rates_for_model("claude-sonnet-5", self.p, priced_at=date(2026, 10, 7))
+        self.assertEqual(sonnet5["cache_read"], 0.20)
+
+    def test_haiku_5_5_short_and_long_context(self):
+        short = pricing.rates_for_model("claude-haiku-5-5", self.p)
+        self.assertEqual(short["cache_read"], 0.01)
+        self.assertEqual(short["input"], 0.10)
+        long = pricing.rates_for_model("claude-haiku-5-5", self.p, long_context=True)
+        long_1h = pricing.rates_for_model(
+            "claude-haiku-5-5", self.p, cache_window="1h", long_context=True
+        )
+        self.assertEqual(long["cache_read"], 0.05)
+        self.assertEqual(long["input"], 0.50)
+        self.assertEqual(long["cache_write"], 0.625)
+        self.assertEqual(long_1h["cache_write"], 1.0)
+        self.assertFalse(pricing.is_unknown_model("claude-haiku-5-5", self.p))
+        self.assertEqual(pricing.rates_for_model("claude-haiku-4-5", self.p)["input"], 1.0)
+
     def test_unmatched_sonnet_family_falls_back_to_sonnet_5_not_4_6(self):
         # 未来未收录的 sonnet 变体（不含 claude-sonnet-5 前缀）应通过家族兜底
         # 归到最新的 sonnet-5，而非旧的 sonnet-4-6

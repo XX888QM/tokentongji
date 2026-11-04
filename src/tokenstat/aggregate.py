@@ -2,7 +2,8 @@
 
 口径：
 - 按 date_local（Asia/Shanghai 本地日）分桶。
-- 归一化总量 total = input + output + cache_read + cache_creation。
+- 归一化总量 total = input + output + cache_read + cache_creation + cache_creation_1h。
+  cache_creation 只含 5m 写入，cache_creation_1h 是 1h 写入，两者相加才是写入总量。
   Codex 的 reasoning 是 output 子集，不重复计；Opencode 的 reasoning 独立于
   output，上屏与计费时并入 output。
 - 费用按计价日和单次请求上下文档位分桶后计算，再汇总；不能把多次短请求
@@ -62,12 +63,17 @@ def period_range(period: str, today: Optional[date] = None) -> tuple[str, str]:
     raise ValueError(f"未知 period: {period!r}")
 
 
+def _row_cache_creation(r: dict) -> int:
+    """展示与总量用的缓存写入：5m 列加 1h 列。缺 1h 当 0，库列含义不变。"""
+    return int(r["cache_creation"] or 0) + int(r.get("cache_creation_1h") or 0)
+
+
 def _row_total(r: dict) -> int:
     return (
         r["input"]
         + _row_output(r)
         + r["cache_read"]
-        + r["cache_creation"]
+        + _row_cache_creation(r)
     )
 
 
@@ -312,7 +318,7 @@ def breakdown(
         m["input"] += r["input"]
         m["output"] += _row_output(r)
         m["cache_read"] += r["cache_read"]
-        m["cache_creation"] += r["cache_creation"]
+        m["cache_creation"] += _row_cache_creation(r)
         m["total"] += rt
         m["cost_usd"] += rc
 
@@ -378,7 +384,7 @@ def export_rows(
         out["input"] += int(row["input"] or 0)
         out["output"] += _row_output(row)
         out["cache_read"] += int(row["cache_read"] or 0)
-        out["cache_creation"] += int(row["cache_creation"] or 0)
+        out["cache_creation"] += _row_cache_creation(row)
         out["total"] += _row_total(row)
         out["cost_usd"] += _cost_from_row(row, pricing)
     for row in out_map.values():
@@ -828,7 +834,7 @@ def session_detail(
         group["input"] += int(r["input"] or 0)
         group["output"] += _row_output(r)
         group["cache_read"] += int(r["cache_read"] or 0)
-        group["cache_creation"] += int(r["cache_creation"] or 0)
+        group["cache_creation"] += _row_cache_creation(r)
         group["reasoning"] += int(r["reasoning"] or 0)
         group["total"] += rt
         group["cost_usd"] += rc

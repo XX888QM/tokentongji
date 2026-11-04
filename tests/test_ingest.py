@@ -1144,5 +1144,168 @@ class TestIngestLock(unittest.TestCase):
                     ingest.run_once()
 
 
+class TestSafeRollback(unittest.TestCase):
+    """来源异常后先回滚，避免未提交删除被后面的 commit 落盘。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.data = root / "data"
+        self.data.mkdir()
+        self.db_path = self.data / "tokenstat.db"
+        self.claude_dir = root / "claude"
+        self.claude_dir.mkdir()
+        (self.claude_dir / "session.jsonl").write_text("{}\n", encoding="utf-8")
+        sessions = root / "sessions"
+        sessions.mkdir()
+        archived = root / "archived"
+        archived.mkdir()
+        usage_dir = root / "usage"
+        usage_dir.mkdir()
+        openclaw = root / "openclaw"
+        openclaw.mkdir()
+        agents = root / "agents"
+        agents.mkdir()
+        # 空文件仍会走到 set_ingest_state 的 conn.commit，用来把泄漏的删除带下去。
+        self.grok_log = root / "grok.jsonl"
+        self.grok_log.write_bytes(b"")
+        self.dedup_key = "keep-me"
+        self._config = patch.multiple(
+            "tokenstat.config",
+            DATA_DIR=self.data,
+            DB_PATH=self.db_path,
+            CLAUDE_PROJECTS_DIR=self.claude_dir,
+            CODEX_SESSION_DIRS=(sessions, archived),
+            CLAUDE_MEM_CODEX_USAGE_DIR=usage_dir,
+            OPENCODE_DB_PATH=root / "opencode.db",
+            OPENCLAW_SESSION_DIR=openclaw,
+            OPENCLAW_AGENTS_DIR=agents,
+            HERMES_STATE_DB=root / "hermes.db",
+            GROK_LOG_PATH=self.grok_log,
+            CLAUDE_MEM_GROK_LOG_PATH=root / "claude-mem-grok.jsonl",
+            CURSOR_ENABLED=False,
+            CURSOR_STATE_DB=root / "cursor-state.vscdb",
+            CURSOR_CLI_CONFIG=root / "cli-config.json",
+        )
+        self._config.start()
+
+    def tearDown(self):
+        self._config.stop()
+        self.tmp.cleanup()
+
+    def _seed(self):
+        conn = db.get_conn(self.db_path)
+        try:
+            db.init_db(conn)
+            db.insert_records(conn, [
+                UsageRecord(
+                    ts=1750597784,
+                    source="claude",
+                    model="claude-opus-4-7",
+                    project="/tmp/proj",
+                    total_tokens=10,
+                    dedup_key=self.dedup_key,
+                ),
+            ])
+        finally:
+            conn.close()
+
+    def _run(self):
+        real_ingest_file = ingest._ingest_file
+        calls = {"n": 0}
+
+        def patched(conn, path, source, default_model):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                self.first_source = source
+                self.first_name = path.name
+                self.deleted = db.delete_dedup_keys(
+                    conn, "claude", [self.dedup_key], commit=False
+                )
+                self.saw_open_transaction = conn.in_transaction
+                raise RuntimeError("ingest write failed before commit")
+            return real_ingest_file(conn, path, source, default_model)
+
+        with patch("tokenstat.ingest.codex_parser.read_default_model", return_value="gpt-5.5"), \
+             patch("tokenstat.ingest._ingest_file", side_effect=patched):
+            result = ingest.run_once()
+        self.ingest_file_calls = calls["n"]
+        return result
+
+    def _counts(self):
+        conn = db.get_conn(self.db_path)
+        try:
+            usage = conn.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0]
+            kept = conn.execute(
+                "SELECT COUNT(*) FROM usage_events WHERE dedup_key = ?",
+                (self.dedup_key,),
+            ).fetchone()[0]
+            state = conn.execute(
+                "SELECT COUNT(*) FROM ingest_state WHERE source_file = ?",
+                (str(self.grok_log),),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        return usage, kept, state
+
+    def test_uncommitted_delete_survives_later_commit(self):
+        self._seed()
+        result = self._run()
+        usage, kept, state = self._counts()
+        errors = result.get("errors") or []
+
+        self.assertEqual(self.first_source, "claude")
+        self.assertEqual(self.first_name, "session.jsonl")
+        self.assertEqual(self.deleted, 1)
+        self.assertTrue(self.saw_open_transaction)
+        self.assertEqual(self.ingest_file_calls, 1)
+        self.assertEqual(result["files_scanned"], 2)
+        self.assertEqual(state, 1)
+        self.assertEqual((usage, kept), (1, 1))
+        self.assertTrue(
+            any(
+                item.startswith("claude:session.jsonl:")
+                and "ingest write failed before commit" in item
+                and "rollback failed" not in item
+                for item in errors
+            ),
+            errors,
+        )
+
+    def test_rollback_failure_keeps_original_error_and_retries_once(self):
+        self._seed()
+        real_get_conn = db.get_conn
+        holder = {}
+
+        class _RollbackConn:
+            """sqlite3.Connection.rollback 是只读的，只能包一层让它失败。"""
+
+            def __init__(self, conn):
+                self._conn = conn
+                self.calls = 0
+
+            def rollback(self):
+                self.calls += 1
+                if self.calls <= 2:
+                    raise sqlite3.OperationalError("rollback denied")
+                return self._conn.rollback()
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+        def wrapped_get_conn(path):
+            conn = _RollbackConn(real_get_conn(path))
+            holder["conn"] = conn
+            return conn
+
+        with patch("tokenstat.ingest.db.get_conn", side_effect=wrapped_get_conn):
+            result = self._run()
+
+        text = "\n".join(result.get("errors") or [])
+        self.assertEqual(holder["conn"].calls, 2)
+        self.assertIn("claude:session.jsonl: ingest write failed before commit", text)
+        self.assertIn("rollback failed: rollback denied", text)
+
+
 if __name__ == "__main__":
     unittest.main()

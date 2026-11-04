@@ -8,6 +8,8 @@ v3 session（*.jsonl，无 "trajectory"）：
   第一行 type=="session" 作上下文（session_id、cwd）
   type=="message" + role=="assistant" 提取 message.usage
   dedup_key = "openclaw-v3:{msg_id}"
+  累计快照（四分量分别等于已接受行的前缀和，但 totalTokens 不等于这四项之和）
+  直接丢弃且不计入前缀和，type==session 时把前缀和清零。
 
 sqlite（~/.openclaw/agents/*/agent/openclaw-agent.sqlite）：
   2026-09 起 jsonl 迁进 transcript_events.event_json，仍是 v3 行。
@@ -113,7 +115,7 @@ def parse_record(obj: dict, source_file: str, pos: int) -> Optional[UsageRecord]
 def parse_v3_record(obj: dict, source_file: str, pos: int, ctx: dict) -> Optional[UsageRecord]:
     """解析 openclaw v3 session 格式（*.jsonl，无 'trajectory'）。
 
-    ctx 跨行持久化 session_id / cwd，由调用方在每个增量批次间传入。
+    ctx 跨行持久化 session_id / cwd 和已接受行的四分量前缀和，由调用方在每个增量批次间传入。
     """
     if not isinstance(obj, dict):
         return None
@@ -126,6 +128,10 @@ def parse_v3_record(obj: dict, source_file: str, pos: int, ctx: dict) -> Optiona
         session_key = obj.get("sessionKey") or obj.get("session_key")
         if isinstance(session_key, str) and session_key.strip():
             ctx["cwd"] = _project_from_session_key(session_key)
+        ctx["prefix_input"] = 0
+        ctx["prefix_output"] = 0
+        ctx["prefix_cache_read"] = 0
+        ctx["prefix_cache_write"] = 0
         return None
 
     if obj_type != "message":
@@ -160,18 +166,42 @@ def parse_v3_record(obj: dict, source_file: str, pos: int, ctx: dict) -> Optiona
     session_id = ctx.get("session_id") or ""
     project = ctx.get("cwd") or "openclaw"
 
+    input_tokens = int(usage.get("input") or 0)
+    output_tokens = int(usage.get("output") or 0)
+    cache_read_tokens = int(usage.get("cacheRead") or 0)
+    cache_creation_tokens = int(usage.get("cacheWrite") or 0)
+    prefix_input = int(ctx.get("prefix_input") or 0)
+    prefix_output = int(ctx.get("prefix_output") or 0)
+    prefix_cache_read = int(ctx.get("prefix_cache_read") or 0)
+    prefix_cache_write = int(ctx.get("prefix_cache_write") or 0)
+    # 累计快照的四分量等于前缀和，但 totalTokens 对不上这四项之和。
+    # total 等于自身四分量之和的重复调用要留下。
+    component_sum = input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens
+    if (
+        input_tokens == prefix_input
+        and output_tokens == prefix_output
+        and cache_read_tokens == prefix_cache_read
+        and cache_creation_tokens == prefix_cache_write
+        and total_tokens != component_sum
+    ):
+        return None
+    ctx["prefix_input"] = prefix_input + input_tokens
+    ctx["prefix_output"] = prefix_output + output_tokens
+    ctx["prefix_cache_read"] = prefix_cache_read + cache_read_tokens
+    ctx["prefix_cache_write"] = prefix_cache_write + cache_creation_tokens
+
     return UsageRecord(
         ts=ts,
         source=SOURCE_OPENCLAW,
         model=model,
         project=project,
-        input_tokens=int(usage.get("input") or 0),
-        output_tokens=int(usage.get("output") or 0),
-        cache_read_tokens=int(usage.get("cacheRead") or 0),
-        cache_creation_tokens=int(usage.get("cacheWrite") or 0),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_creation_tokens=cache_creation_tokens,
         reasoning_tokens=0,
         total_tokens=total_tokens,
-        request_prompt_tokens=int(usage.get("input") or 0) + int(usage.get("cacheRead") or 0),
+        request_prompt_tokens=input_tokens + cache_read_tokens,
         session_id=session_id,
         source_file=source_file,
         pos=pos,

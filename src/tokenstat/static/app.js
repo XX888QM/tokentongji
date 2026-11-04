@@ -264,6 +264,10 @@ function renderHeroTotal(el, total) {
   const duration = 820;
 
   if (!motionAllowed || previous === total) {
+    // 动画一开始就把 tokenValue 写成目标值，总量没变时会走这里。
+    // 不先取消旧帧的话，后续帧仍会把数字写回中间值。
+    if (heroNumberFrame) window.cancelAnimationFrame(heroNumberFrame);
+    heroNumberFrame = null;
     el.textContent = fmtCN(total);
     if (el.dataset) el.dataset.tokenValue = String(total);
     return;
@@ -473,8 +477,11 @@ async function loadDaily() {
 
 // filterable=false 用于 claude-mem 徽标：它是展示口径，不是 by_model/by_project
 // 数组里真实的 source 字段值，点了也筛不出东西，干脆不做成可点击的。
-const badge = (src, label = src, filterable = true) =>
-  `<span class="badge ${esc(src)}"${filterable ? ` data-source="${esc(src)}"` : ''}>${esc(label)}</span>`;
+const badge = (src, label = src, filterable = true) => {
+  // data-source 仍是筛选键（claude_mem）；class 用 CSS 里的连字符名。
+  const cls = src === 'claude_mem' ? 'claude-mem' : src;
+  return `<span class="badge ${esc(cls)}"${filterable ? ` data-source="${esc(src)}"` : ''}>${esc(label)}</span>`;
+};
 const sourceBadge = (row) => row.collector === 'claude-mem'
   ? badge('claude_mem', 'claude-mem', true)
   : badge(row.source);
@@ -488,12 +495,17 @@ function matchesSourceFilter(row) {
 }
 
 // ---- 来源筛选：点来源名字/徽标只看这个来源 ----
+function cacheMatchesPeriod(data) {
+  return !!data && (!Object.prototype.hasOwnProperty.call(data, 'period') || data.period === currentPeriod);
+}
+
 function toggleSourceFilter(source) {
   sourceFilter = sourceFilter === source ? null : source;
   renderSourceFilterChip();
   projectPage = 0;
-  if (lastBreakdownData) renderBreakdown(lastBreakdownData);
-  if (lastTopSessionsData) renderTopSessions(lastTopSessionsData);
+  // 切周期后缓存可能还是上一周期；没有 period，或就是当前周期，才重绘。
+  if (cacheMatchesPeriod(lastBreakdownData)) renderBreakdown(lastBreakdownData);
+  if (cacheMatchesPeriod(lastTopSessionsData)) renderTopSessions(lastTopSessionsData);
 }
 
 function renderSourceFilterChip() {
@@ -822,6 +834,8 @@ function setupPeriodToggle() {
     storageSet(sessionStorage, 'tokenstat_period', currentPeriod);
     renderPeriodState();
     projectPage = 0;  // 切周期回到第 1 页（定时刷新不重置，避免打断翻页浏览）
+    lastBreakdownData = null;
+    lastTopSessionsData = null;
     markTablesLoading();
     // 按钮高亮是同步切的，下面两个请求若失败，不能让表格悄悄停在旧周期的
     // 数据却不吭声——那样"选中的周期"和"表格显示的周期"会对不上、误导用户。
