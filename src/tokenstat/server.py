@@ -424,6 +424,12 @@ class Handler(BaseHTTPRequestHandler):
                 "level": "warn",
                 "message": f"最近一次后台核对出错：{runtime_error}",
             })
+        zst_unread = (data["runtime"].get("last_result") or {}).get("zst_unread")
+        if zst_unread:
+            data["issues"].append({
+                "level": "warn",
+                "message": f"{zst_unread} 个 Codex 压缩会话（.jsonl.zst）读不了：找不到 zstd 命令（brew install zstd）",
+            })
         backup_at = data["db"].get("latest_backup_at")
         if backup_at:
             backup_dt = datetime.strptime(backup_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=_LOCAL_TZ)
@@ -622,6 +628,17 @@ def _ingest_loop(stop_event: threading.Event) -> None:
         stop_event.wait(config.INGEST_INTERVAL_SEC)
 
 
+def _backup_has_rows(path: Path) -> bool:
+    try:
+        conn = sqlite3.connect(str(path))
+        try:
+            return bool(conn.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0])
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+
+
 def _ensure_usable_db() -> bool:
     """活库空时优先恢复最新备份；已装自启且无备份则拒绝建空账本。"""
     path = Path(config.DB_PATH)
@@ -644,9 +661,11 @@ def _ensure_usable_db() -> bool:
         if count:
             return True
         empty = True
-    if backups:
-        print(f"[server] 活库空，从备份恢复 {backups[0].name}", flush=True)
-        db.backup_database(backups[0], path)
+    # 只恢复有数据的备份：空库也会被备份，mtime 最新的未必是好的。
+    usable = [b for b in backups if _backup_has_rows(b)]
+    if usable:
+        print(f"[server] 活库空，从备份恢复 {usable[0].name}", flush=True)
+        db.backup_database(usable[0], path)
         return True
     plist = Path.home() / "Library/LaunchAgents/com.yunxin.tokenstat.plist"
     if plist.is_file():

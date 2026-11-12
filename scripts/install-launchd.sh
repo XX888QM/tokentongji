@@ -41,7 +41,8 @@ launchctl bootout "$SERVICE" 2>/dev/null || true
 # 再停占用 8787 的手动服务，再 checkpoint + 拷库，避免 WAL 对半切。
 if [[ -f "$APP_DIR/data/tokenstat.pid" ]]; then
   old_pid="$(cat "$APP_DIR/data/tokenstat.pid" 2>/dev/null || true)"
-  if [[ -n "${old_pid:-}" ]] && ps -p "$old_pid" >/dev/null 2>&1; then
+  # pid 文件可能是陈旧的，pid 早被别的进程复用；只杀命令行确实是 tokenstat.server 的。
+  if [[ -n "${old_pid:-}" ]] && ps -o command= -p "$old_pid" 2>/dev/null | grep -q "tokenstat.server"; then
     kill "$old_pid" 2>/dev/null || true
     sleep 1
   fi

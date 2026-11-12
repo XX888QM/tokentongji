@@ -375,9 +375,11 @@ function statCard(label, p) {
     .map((row) => `<span title="${fmt(row.total)} tokens" style="color:${row.color}">${esc(row.label)} ${sourceTotal(row)}</span>`)
     .join('');
   const projection = label === '本月' ? monthProjectionLine(p) : '';
+  // 累计卡片写明真实起点（库里最早一条记录的日期），避免被当成"从头开始"。
+  const since = p.start_date ? `<span class="s-since">自 ${esc(p.start_date)} 起</span>` : '';
   return `
     <div class="stat-card">
-      <div class="s-label">${label}</div>
+      <div class="s-label">${label}${since}</div>
       <div class="s-value" title="${fmt(p.total)}">${fmtCN(p.total)}</div>
       <div class="s-cost">${fmtCost(p.cost_usd)}</div>
       ${projection}

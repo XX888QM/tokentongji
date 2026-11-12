@@ -222,7 +222,7 @@ def _period_summary(conn: sqlite3.Connection, period: str, pricing: dict) -> dic
     for source_map in (by_source, by_display_source):
         for source in source_map.values():
             source["cost_usd"] = round(source["cost_usd"], 4)
-    return {
+    result = {
         "total": total,
         "cost_usd": round(cost, 4),
         "by_source": by_source,
@@ -232,6 +232,10 @@ def _period_summary(conn: sqlite3.Connection, period: str, pricing: dict) -> dic
             "records": claude_mem_records,
         },
     }
+    if period == "all":
+        # 累计的真实起点：库里最早一条记录的日期，前端写在"累计"卡片上，别让人误以为是从头开始。
+        result["start_date"] = conn.execute("SELECT MIN(date_local) FROM usage_events").fetchone()[0]
+    return result
 
 
 def summary(conn: sqlite3.Connection, pricing: Optional[dict] = None) -> dict:
@@ -474,6 +478,49 @@ def top_sessions(
     return {"period": period, "sessions": result}
 
 
+def _models_cost_detail(conn: sqlite3.Connection, model_names: list, pricing: dict) -> list:
+    """按模型汇总用量并估算费用（聚合口径，不逐行取历史日期），按 token 总量倒序。"""
+    detail = []
+    if not model_names:
+        return detail
+    placeholders = ",".join("?" for _ in model_names)
+    rows = conn.execute(
+        f"""
+        SELECT model, source, COUNT(*) AS records, SUM({_total_sql()}) AS total,
+               SUM(input_tokens) AS input, SUM(output_tokens) AS output,
+               SUM(cache_read_tokens) AS cache_read,
+               SUM(cache_creation_tokens) AS cache_creation,
+               SUM(COALESCE(cache_creation_1h_tokens, 0)) AS cache_creation_1h,
+               SUM(reasoning_tokens) AS reasoning
+        FROM usage_events
+        WHERE model IN ({placeholders})
+        GROUP BY model, source
+        """,
+        model_names,
+    ).fetchall()
+    for row in rows:
+        r = dict(row)
+        # 按 source 分组、用 _row_output 折 OpenCode 的 reasoning 进 output，和
+        # _cost_from_row 同一套口径，否则 total 里含 reasoning 但 cost_usd 没算。
+        cost = pricing_mod.cost_for(
+            r["model"],
+            input_tokens=int(r["input"] or 0),
+            output_tokens=_row_output(r),
+            cache_read_tokens=int(r["cache_read"] or 0),
+            cache_creation_tokens=int(r["cache_creation"] or 0),
+            cache_creation_1h_tokens=int(r.get("cache_creation_1h") or 0),
+            pricing=pricing,
+        )
+        detail.append({
+            "model": r["model"],
+            "records": int(r["records"] or 0),
+            "total": int(r["total"] or 0),
+            "cost_usd": round(cost, 4),
+        })
+    detail.sort(key=lambda d: d["total"], reverse=True)
+    return detail
+
+
 def audit(
     conn: sqlite3.Connection,
     pricing: Optional[dict] = None,
@@ -590,46 +637,7 @@ def audit(
         model for model in distinct_models
         if pricing_mod.is_unknown_model(model, pricing)
     ]
-    unknown_models_detail = []
-    if unknown_models:
-        placeholders = ",".join("?" for _ in unknown_models)
-        unknown_rows = conn.execute(
-            f"""
-            SELECT model, source, COUNT(*) AS records, SUM({_total_sql()}) AS total,
-                   SUM(input_tokens) AS input, SUM(output_tokens) AS output,
-                   SUM(cache_read_tokens) AS cache_read,
-                   SUM(cache_creation_tokens) AS cache_creation,
-               SUM(COALESCE(cache_creation_1h_tokens, 0)) AS cache_creation_1h,
-                   SUM(reasoning_tokens) AS reasoning
-            FROM usage_events
-            WHERE model IN ({placeholders})
-            GROUP BY model, source
-            """,
-            unknown_models,
-        ).fetchall()
-        for row in unknown_rows:
-            r = dict(row)
-            # 未知 model 走 default 价目（非 0），可以直接算出估算费用；default 没
-            # 有 long_context/next_pricing 分档，聚合口径够用，不用逐行取历史日期。
-            # 按 source 分组、用 _row_output 折 OpenCode 的 reasoning 进 output，
-            # 和 _cost_from_row 同一套口径，否则 total 里含 reasoning 但 cost_usd
-            # 没算，OpenCode 上的未知模型费用会算少。
-            cost = pricing_mod.cost_for(
-                r["model"],
-                input_tokens=int(r["input"] or 0),
-                output_tokens=_row_output(r),
-                cache_read_tokens=int(r["cache_read"] or 0),
-                cache_creation_tokens=int(r["cache_creation"] or 0),
-                cache_creation_1h_tokens=int(r.get("cache_creation_1h") or 0),
-                pricing=pricing,
-            )
-            unknown_models_detail.append({
-                "model": r["model"],
-                "records": int(r["records"] or 0),
-                "total": int(r["total"] or 0),
-                "cost_usd": round(cost, 4),
-            })
-        unknown_models_detail.sort(key=lambda d: d["total"], reverse=True)
+    unknown_models_detail = _models_cost_detail(conn, unknown_models, pricing)
     grand_total = sum(s["total"] for s in sources)
     unknown_total = sum(d["total"] for d in unknown_models_detail)
     unknown_models_summary = {
@@ -684,6 +692,27 @@ def audit(
             "message": (
                 f"发现 {mixed_sessions_summary['session_count']} 个跨来源/模型/项目会话，"
                 f"占近 90 天用量的 {mixed_sessions_summary['pct']}%；不代表重复计费"
+            ),
+        })
+    # 没有精确价目条目、借相近型号估价的模型：不是未知，但价格可能不准（新版本上线价格常变）。
+    approx_map = {}
+    for model in distinct_models:
+        borrowed = pricing_mod.priced_as(model, pricing)
+        if borrowed:
+            approx_map[model] = borrowed
+    approx_detail = _models_cost_detail(conn, list(approx_map), pricing)
+    if approx_detail:
+        merged = {}
+        for d in approx_detail:
+            m = merged.setdefault(d["model"], {"model": d["model"], "total": 0, "cost_usd": 0.0})
+            m["total"] += d["total"]
+            m["cost_usd"] += d["cost_usd"]
+        top = sorted(merged.values(), key=lambda d: d["cost_usd"], reverse=True)[:3]
+        issues.append({
+            "level": "info",
+            "message": (
+                f"{len(merged)} 个模型没有精确价目，按相近型号估价："
+                + "、".join(f"{d['model']}→{approx_map[d['model']]}（约 ${d['cost_usd']:,.0f}）" for d in top)
             ),
         })
     if unknown_models:

@@ -405,6 +405,18 @@ class TestAuditAndInsights(unittest.TestCase):
         warn_msgs = [i["message"] for i in a["issues"] if i["level"] == "warn"]
         self.assertTrue(any("未知模型" in m and "$" in m for m in warn_msgs))
 
+    def test_audit_reports_models_priced_by_a_similar_entry(self):
+        # 没有精确价目条目、借相近型号估价的模型：info 提示借了谁，不当未知模型告警
+        db.insert_records(self.conn, [
+            UsageRecord(ts=_ts("2026-06-06"), source="codex", model="gpt-5.3-codex-spark",
+                        project="/tmp/c", input_tokens=1_000_000, total_tokens=1_000_000,
+                        dedup_key="approx1"),
+        ])
+        a = aggregate.audit(self.conn, pricing.load_pricing())
+        msgs = [i["message"] for i in a["issues"] if i["level"] == "info"]
+        self.assertTrue(any("gpt-5.3-codex-spark→gpt-5.3-codex" in m for m in msgs), msgs)
+        self.assertNotIn("gpt-5.3-codex-spark", a["unknown_models"])
+
     def test_audit_unknown_model_cost_folds_opencode_reasoning_into_output(self):
         # OpenCode 的 reasoning 独立于 output 存字段，_row_output() 规定上屏/
         # 计费时要并入 output；这条未知模型估算费用必须走同一口径，不能只按

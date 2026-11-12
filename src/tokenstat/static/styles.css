@@ -194,6 +194,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .stat-card:first-child { padding-left: 0; background: transparent; }
 .stat-card:last-child { border-right: 0; }
 .stat-card .s-label { margin-bottom: 12px; color: var(--dim); font: 600 14px/1 var(--number-font); letter-spacing: .12em; text-transform: uppercase; }
+.stat-card .s-label .s-since { margin-left: 10px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; }
 .stat-card .s-value { color: var(--paper); font: 700 34px/1.05 var(--number-font); letter-spacing: -.04em; }
 .stat-card .s-cost { margin-top: 8px; color: var(--gold); font: 500 15px/1 var(--number-font); }
 .stat-card .s-projection { margin-top: 4px; color: var(--dim); font-size: 13px; }

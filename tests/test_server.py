@@ -636,6 +636,32 @@ class TestEnsureUsableDb(unittest.TestCase):
             check.close()
         self.assertEqual(n, 1)
 
+    def test_restore_skips_newer_empty_backup(self):
+        live = self.data / "tokenstat.db"
+        good = self.data / "backups" / "tokenstat-20260906-120000-000000.db"
+        empty = self.data / "backups" / "tokenstat-20260907-120000-000000.db"
+        conn = db.get_conn(good)
+        db.init_db(conn)
+        db.insert_records(conn, [
+            UsageRecord(ts=1, source="codex", model="gpt-5.5", project="/p",
+                        total_tokens=9, dedup_key="seed"),
+        ])
+        conn.close()
+        conn = db.get_conn(empty)
+        db.init_db(conn)
+        conn.close()
+        os.utime(good, (1_000_000, 1_000_000))  # 好备份更旧，空备份 mtime 最新
+        live.write_bytes(b"")
+        with patch("tokenstat.server.config.DATA_DIR", self.data):
+            with patch("tokenstat.server.config.DB_PATH", live):
+                self.assertTrue(server._ensure_usable_db())
+        check = db.get_conn(live)
+        try:
+            n = check.execute("SELECT COUNT(*) FROM usage_events").fetchone()[0]
+        finally:
+            check.close()
+        self.assertEqual(n, 1)
+
     def test_refuses_empty_ledger_when_launch_agent_exists(self):
         live = self.data / "tokenstat.db"
         agents = self.root / "Library" / "LaunchAgents"
