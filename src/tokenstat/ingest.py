@@ -11,9 +11,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import os
+import re
 import sqlite3
 import time
 from dataclasses import replace
@@ -31,6 +33,8 @@ from .parsers import grok as grok_parser
 from .parsers import cursor as cursor_parser
 
 MAX_LINE_BYTES = 50 * 1024 * 1024
+# Codex 会话里只有这几类行会被解析器用到；其余（response_item 等）占绝大多数体积，先用子串挡掉再 json.loads。
+_CODEX_LINE_RE = re.compile(rb'"token_count"|"session_meta"|"turn_context"|claude_mem\.codex_usage')
 _HEAD_SIG_BYTES = 256
 
 
@@ -44,6 +48,8 @@ def codex_files() -> Iterator[Path]:
     for root in config.CODEX_SESSION_DIRS:
         if root.is_dir():
             yield from root.rglob("*.jsonl")
+            # Codex 会把旧会话原地压成 .jsonl.zst；内容不再变，只需整个读一次。
+            yield from root.rglob("*.jsonl.zst")
 
 
 def claude_mem_codex_usage_files() -> Iterator[Path]:
@@ -105,6 +111,17 @@ def _head_rewritten(state: dict | None, path: Path) -> bool:
     return prev != _file_head_sig(path)
 
 
+@contextlib.contextmanager
+def _open_stream(path: Path, start_offset: int):
+    """按行读文件：普通文件从 offset 续读；.zst 压缩会话整个解压流式读（不可续读）。"""
+    if path.suffix == ".zst":
+        yield codex_parser.iter_rollout_lines(path)
+    else:
+        with open(path, "rb") as fh:
+            fh.seek(start_offset)
+            yield fh
+
+
 def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
     """增量解析单个文件，返回新增或更新记录数。"""
     try:
@@ -134,8 +151,7 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
     pos = start_offset
 
     try:
-        with open(path, "rb") as fh:
-            fh.seek(start_offset)
+        with _open_stream(path, start_offset) as fh:
             for raw in fh:
                 line_start = pos
                 pos += len(raw)
@@ -143,6 +159,8 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
                     break  # 尾部残行，不消费
                 consumed = pos
                 if len(raw) > MAX_LINE_BYTES:
+                    continue
+                if source == SOURCE_CODEX and not _CODEX_LINE_RE.search(raw):
                     continue
                 try:
                     obj = json.loads(raw)
@@ -165,6 +183,8 @@ def _ingest_file(conn, path: Path, source: str, default_model: str) -> int:
                     recs.append(rec)
     except OSError:
         return 0
+    if path.suffix == ".zst":
+        consumed = st.st_size  # 压缩文件整读完毕；offset 记成压缩文件大小，下轮走"无新增"快速跳过
 
     added = 0
     if legacy_claude_keys:
@@ -603,6 +623,10 @@ def run_once(reset_codex_forks: bool = False) -> dict:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
     result = {"files_scanned": files_scanned, "records_added": records_added}
+    if codex_parser.zstd_binary() is None:
+        unread = sum(1 for p in codex_files() if p.suffix == ".zst")
+        if unread:
+            result["zst_unread"] = unread  # 没装 zstd，这些压缩会话读不了
     if reset is not None:
         result["reset_codex_forks"] = reset
     if errors:

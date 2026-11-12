@@ -11,6 +11,8 @@
   之后凡 total 仍落在父会话轨迹上的 token_count 整段作基线推进、不产出行；
   只跳首条会把父会话后续 replay 再计一遍（8/12 曾约 2x）。找不到父文件时
   仍只跳首条。与父轨迹零交集的独立 subagent 从 0 正常计数。
+- 续写会话文件（<sid>_<续写id>.jsonl，无 forked_from_id）：首条累计量同样带着前序文件
+  已计过的用量，用 last_token_usage 反推基线，只计本次请求那一份。
 - 同一文件内会交错出现父/子线程的 session_meta，但 total_token_usage 是文件内
   **连续**计数器 → sid 变化绝不能重置差分基线（重置 = 整段累积量重计一遍）。
 - 跳过 info is None（rate-limit 心跳）。
@@ -21,7 +23,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -59,6 +64,39 @@ def read_default_model(config_path: Path = _CONFIG_PATH) -> str:
     return _DEFAULT_MODEL_FALLBACK
 
 
+_ZSTD_FALLBACK_PATHS = ("/opt/homebrew/bin/zstd", "/usr/local/bin/zstd")
+
+
+def zstd_binary() -> Optional[str]:
+    """压缩会话（.jsonl.zst）靠系统 zstd 解压；launchd 的 PATH 里没有 homebrew，补查常见位置。"""
+    return shutil.which("zstd") or next((p for p in _ZSTD_FALLBACK_PATHS if os.access(p, os.X_OK)), None)
+
+
+def rollout_name(source_file) -> str:
+    """去重键用的文件名：.jsonl.zst 与原 .jsonl 同键，压缩前后不会重复计数。"""
+    name = Path(source_file).name
+    return name[:-4] if name.endswith(".zst") else name
+
+
+def iter_rollout_lines(path: Path):
+    """逐行读会话文件（字节行）；.zst 走系统 zstd 流式解压，解压失败抛 OSError。"""
+    if path.suffix != ".zst":
+        with open(path, "rb") as fh:
+            yield from fh
+        return
+    zstd = zstd_binary()
+    if not zstd:
+        raise OSError("zstd not found")
+    proc = subprocess.Popen([zstd, "-dc", str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        yield from proc.stdout
+    finally:
+        proc.stdout.close()
+        returncode = proc.wait()
+    if returncode != 0:  # 中途被 break 掉不会走到这里
+        raise OSError(f"zstd exit {returncode}: {path.name}")
+
+
 def load_parent_totals(forked_from_id: str) -> list:
     """按 forked_from_id 找父 session，抽出 token_count 的累积 total 序列。"""
     if not isinstance(forked_from_id, str) or not forked_from_id:
@@ -69,31 +107,32 @@ def load_parent_totals(forked_from_id: str) -> list:
     for root in config.CODEX_SESSION_DIRS:
         if not root.is_dir():
             continue
-        matches = list(root.rglob(f"*{needle}*.jsonl"))
+        matches = list(root.rglob(f"*{needle}*.jsonl")) or list(root.rglob(f"*{needle}*.jsonl.zst"))
         if not matches:
             continue
         path = matches[0]
         totals = []
         try:
-            with open(path, "r", encoding="utf-8") as fh:
-                for line in fh:
-                    try:
-                        obj = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    payload = obj.get("payload") if isinstance(obj, dict) else None
-                    if not isinstance(payload, dict) or payload.get("type") != "token_count":
-                        continue
-                    info = payload.get("info")
-                    if not isinstance(info, dict):
-                        continue
-                    tot = info.get("total_token_usage")
-                    if not isinstance(tot, dict):
-                        continue
-                    try:
-                        totals.append(int(tot.get("total_tokens") or 0))
-                    except (TypeError, ValueError):
-                        continue
+            for line in iter_rollout_lines(path):
+                if b'"token_count"' not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                payload = obj.get("payload") if isinstance(obj, dict) else None
+                if not isinstance(payload, dict) or payload.get("type") != "token_count":
+                    continue
+                info = payload.get("info")
+                if not isinstance(info, dict):
+                    continue
+                tot = info.get("total_token_usage")
+                if not isinstance(tot, dict):
+                    continue
+                try:
+                    totals.append(int(tot.get("total_tokens") or 0))
+                except (TypeError, ValueError):
+                    continue
         except OSError:
             return []
         return totals
@@ -158,6 +197,26 @@ class CodexState:
             ),
             skipping_replay=bool(ctx.get("skipping_replay")),
         )
+
+
+def _inherited_baseline(cur: dict, last) -> dict:
+    """首条 token_count 之前已累计、但本文件里没有逐条记录的用量。
+
+    续写/恢复的会话文件（文件名形如 rollout-<ts>-<sid>_<续写id>.jsonl，session_meta
+    没有 forked_from_id）首条 total_token_usage 就带着上一个文件已计过的累计量
+    （实测 2.88 亿），本次请求只有 last_token_usage 那一份。全新会话首条 total ==
+    last，基线为 0，行为不变。last 缺失/不合法（含超过累计量）时返回 0，维持旧行为。
+    """
+    zero = _zero_total()
+    if not isinstance(last, dict):
+        return zero
+    try:
+        last_cur = {k: int(last.get(k, 0) or 0) for k in _FIELDS}
+    except (TypeError, ValueError):
+        return zero
+    if last_cur["total_tokens"] <= 0 or any(v < 0 or v > cur[k] for k, v in last_cur.items()):
+        return zero
+    return {k: cur[k] - last_cur[k] for k in _FIELDS}
 
 
 def process_record(
@@ -263,6 +322,9 @@ def process_record(
         state.skipping_replay = False
     if ts == 0:
         return None
+    if all(v == 0 for v in state.prev_total.values()):
+        # 文件首条：累计量里可能带着本文件看不到的前序用量。
+        state.prev_total = _inherited_baseline(cur, info.get("last_token_usage"))
     prev = state.prev_total
     state.prev_total = cur
 
@@ -303,7 +365,7 @@ def process_record(
         # 用文件名(自带全局唯一 UUID+时间戳)而非完整路径做去重键：
         # Codex 把 session 从 sessions/ 挪进 archived_sessions/ 后，同一份内容
         # 在两个路径各解析一遍，若键含完整路径就挡不住 → 系统性重复计数。
-        dedup_key=f"{Path(source_file).name}#{pos}",
+        dedup_key=f"{rollout_name(source_file)}#{pos}",
     )
 
 

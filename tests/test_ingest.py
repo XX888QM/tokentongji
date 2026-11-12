@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tokenstat import db, ingest
+from tokenstat.parsers import codex as codex_parser
 from tokenstat.models import UsageRecord
 
 
@@ -433,6 +434,27 @@ class TestCodexIngest(unittest.TestCase):
         c, i, o, cr = self._sum()
         self.assertEqual(c, 1)     # 只 1 条，不是 2
         self.assertEqual(o, 400)   # 不是 800
+
+    @unittest.skipUnless(codex_parser.zstd_binary(), "需要系统 zstd")
+    def test_codex_zst_rollout_read_once_and_same_key_as_plain(self):
+        import subprocess
+        content = [
+            {"type": "session_meta", "payload": {"id": "u1", "cwd": "/real"}},
+            {"type": "turn_context", "payload": {"model": "gpt-5.4", "cwd": "/real"}},
+            {"type": "response_item", "payload": {"type": "message"}},
+            _tc(1000, 600, 200, 400),
+        ]
+        plain = Path(self.tmp.name) / "rollout-z.jsonl"
+        _w(plain, content)
+        subprocess.run([codex_parser.zstd_binary(), "-q", str(plain), "-o", str(plain) + ".zst"], check=True)
+        zst = Path(str(plain) + ".zst")
+        self.assertEqual(ingest._ingest_file(self.conn, zst, "codex", "gpt-5.5"), 1)
+        self.assertEqual(self._sum()[0], 1)
+        # 压缩前后同一个会话：键相同，原 .jsonl 再被读到也不会重复计数
+        ingest._ingest_file(self.conn, plain, "codex", "gpt-5.5")
+        self.assertEqual(self._sum()[0], 1)
+        # 压缩文件不再变：下一轮快速跳过
+        self.assertEqual(ingest._ingest_file(self.conn, zst, "codex", "gpt-5.5"), 0)
 
     def test_codex_model_fallback(self):
         f = Path(self.tmp.name) / "rollout-y.jsonl"

@@ -106,6 +106,9 @@ def parse_record(obj: dict, source_file: str, pos: int) -> Optional[UsageRecord]
         cache_creation_1h_tokens=cache_creation_1h,
         reasoning_tokens=0,
         total_tokens=total,
+        # 每条 assistant 消息（按 message.id 去重后）就是一次完整 API 请求，
+        # 完整 prompt = input + 缓存读 + 缓存写；供长上下文价判档（如 Haiku 5.5 >100K）。
+        request_prompt_tokens=input_tokens + cache_read + cache_creation + cache_creation_1h,
         session_id=session_id,
         source_file=source_file,
         pos=pos,
@@ -141,6 +144,7 @@ def parse_records(obj: dict, source_file: str, pos: int) -> list[UsageRecord]:
             cache_creation_1h_tokens=cache_creation_1h,
             cache_read_tokens=cache_read,
             total_tokens=input_tokens + output_tokens + cache_creation + cache_creation_1h + cache_read,
+            request_prompt_tokens=input_tokens + cache_read + cache_creation + cache_creation_1h,
             dedup_key=f"{base.dedup_key}:iteration:{index}",
         ))
     return records or [base]

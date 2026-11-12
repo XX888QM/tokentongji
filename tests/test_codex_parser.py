@@ -117,6 +117,26 @@ class TestCodexParser(unittest.TestCase):
         )
         self.assertEqual(rec.request_prompt_tokens, 300_000)
 
+    def test_resumed_file_first_snapshot_counts_only_last_request(self):
+        # 续写文件：无 forked_from_id，首条累计 10000 里只有 last 的 1000 是本次请求
+        codex.process_record(_session_meta("/c"), "/f", 0, self.state)
+        codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 1, self.state)
+        last = {"input_tokens": 900, "cached_input_tokens": 700, "output_tokens": 100,
+                "reasoning_output_tokens": 0, "total_tokens": 1000}
+        first = codex.process_record(_token_count(10_000, 8000, 6000, 2000, last=last), "/f", 2, self.state)
+        self.assertEqual(first.total_tokens, 1000)
+        self.assertEqual((first.input_tokens, first.cache_read_tokens, first.output_tokens), (200, 700, 100))
+        # 之后照常按累计差分
+        nxt = codex.process_record(_token_count(10_500, 8300, 6200, 2200, last=last), "/f", 3, self.state)
+        self.assertEqual(nxt.total_tokens, 500)
+
+    def test_fresh_file_first_snapshot_equal_to_last_is_fully_counted(self):
+        codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 0, self.state)
+        last = {"input_tokens": 600, "cached_input_tokens": 200, "output_tokens": 400,
+                "reasoning_output_tokens": 0, "total_tokens": 1000}
+        rec = codex.process_record(_token_count(1000, 600, 200, 400, last=last), "/f", 1, self.state)
+        self.assertEqual(rec.total_tokens, 1000)
+
     def test_duplicate_snapshot_skipped(self):
         codex.process_record(_turn_context("gpt-5.4", "/c"), "/f", 0, self.state)
         codex.process_record(_token_count(1000, 600, 200, 400), "/f", 1, self.state)

@@ -37,6 +37,11 @@ class TestClaudeParser(unittest.TestCase):
         self.assertEqual(rec.dedup_key, "msg_1")
         self.assertEqual(rec.category, "main")
 
+    def test_request_prompt_tokens_is_full_prompt_for_long_context_pricing(self):
+        rec = claude.parse_record(_assistant("msg_1", "/p", model="claude-haiku-5-5"), "/f.jsonl", 0)
+        # 完整 prompt = input + 缓存读 + 缓存写（Haiku 5.5 按 >100K 分档）
+        self.assertEqual(rec.request_prompt_tokens, 6 + 18186 + 26070)
+
     def test_skip_synthetic(self):
         obj = _assistant("msg_2", "/x", model="<synthetic>")
         self.assertIsNone(claude.parse_record(obj, "/f.jsonl", 0))
