@@ -263,10 +263,54 @@ class TestNormalization(unittest.TestCase):
         # 5 代精确条目必须保持原样，不能被 5.1 的兜底顺序污染
         old = pricing.rates_for_model("claude-fable-5", self.p)
         self.assertEqual(old["cache_read"], 1.00)
-        # 未来未收录的 fable 版本应兜底到最新的 5.1，而非旧的 5
-        future = pricing.rates_for_model("claude-fable-6", self.p)
-        self.assertEqual(future["cache_read"], 0.25)
+        # 未来未收录的 fable 版本应兜底到最新已知的 5.2，而非旧的 5 / 5.1
+        for future_model in ("claude-fable-6", "claude-fable-5-3"):
+            future = pricing.rates_for_model(future_model, self.p)
+            self.assertEqual((future["input"], future["cache_read"]), (8.0, 0.20), future_model)
         self.assertFalse(pricing.is_unknown_model("claude-fable-5-1", self.p))
+
+    def test_fable_mythos_5_2_and_fast(self):
+        for m in ("claude-fable-5-2", "claude-mythos-5-2"):
+            r = pricing.rates_for_model(m, self.p)
+            self.assertEqual((r["input"], r["output"], r["cache_read"], r["cache_write"]), (8.0, 40.0, 0.20, 10.0), m)
+            self.assertEqual(pricing.rates_for_model(m, self.p, cache_window="1h")["cache_write"], 16.0, m)
+        fast = pricing.rates_for_model("claude-fable-5-2-fast", self.p)
+        self.assertEqual((fast["input"], fast["output"], fast["cache_read"]), (16.0, 80.0, 0.40))
+
+    def test_gpt_6_1_tiers_are_priced_separately(self):
+        sol = pricing.rates_for_model("gpt-6.1-sol", self.p)
+        terra = pricing.rates_for_model("gpt-6.1-terra", self.p)
+        self.assertEqual((sol["input"], sol["output"], sol["cache_read"]), (2.0, 10.0, 0.10))
+        self.assertEqual((terra["input"], terra["output"], terra["cache_read"]), (1.0, 5.0, 0.05))
+        lc = pricing.rates_for_model("gpt-6.1-sol", self.p, long_context=True)
+        self.assertEqual((lc["input"], lc["output"], lc["cache_read"]), (4.0, 15.0, 0.20))
+        # 带后缀的名字归到各自档位；认不出档位的 gpt-6 不能默认按最贵的 Astra 算
+        self.assertEqual(pricing.rates_for_model("gpt-6.2-terra", self.p)["input"], 1.0)
+        self.assertTrue(pricing.is_unknown_model("gpt-6.1-cyber", self.p))
+
+    def test_unpriced_gemini_and_dated_opus(self):
+        for m in ("gemini-2.5-pro", "gemini-3.5-flash-lite"):
+            self.assertTrue(pricing.is_unknown_model(m, self.p), m)
+        self.assertFalse(pricing.is_unknown_model("gemini-4-argon", self.p))
+        argon_now = pricing.rates_for_model("gemini-4-argon", self.p, priced_at=date(2026, 11, 30))
+        argon_dec = pricing.rates_for_model("gemini-4-argon", self.p, priced_at=date(2026, 12, 1))
+        self.assertEqual((argon_now["input"], argon_dec["input"]), (2.0, 4.0))
+        for dated, plain in (("claude-opus-4-1-20250805", "claude-opus-4-1"), ("claude-opus-4-20250514", "claude-opus-4-0")):
+            self.assertFalse(pricing.is_unknown_model(dated, self.p), dated)
+            self.assertEqual(pricing.rates_for_model(dated, self.p)["input"], pricing.rates_for_model(plain, self.p)["input"])
+
+    def test_dated_price_changes(self):
+        # GPT-5.6 Terra / Luna 2026-07-30 降价；DeepSeek 改价日之后用新价
+        t_old = pricing.rates_for_model("gpt-5.6-terra", self.p, priced_at=date(2026, 7, 29))
+        t_new = pricing.rates_for_model("gpt-5.6-terra", self.p, priced_at=date(2026, 7, 30))
+        self.assertEqual((t_old["input"], t_old["output"], t_new["input"], t_new["output"]), (2.5, 15.0, 2.0, 12.0))
+        l_old = pricing.rates_for_model("gpt-5.6-luna", self.p, priced_at=date(2026, 7, 29))
+        l_new = pricing.rates_for_model("gpt-5.6-luna", self.p, priced_at=date(2026, 7, 30))
+        self.assertEqual((l_old["input"], l_new["input"]), (1.0, 0.20))
+        pro_old = pricing.rates_for_model("deepseek-v4-pro", self.p, priced_at=date(2026, 8, 16))
+        pro_new = pricing.rates_for_model("deepseek-v4-pro", self.p, priced_at=date(2026, 8, 17))
+        self.assertEqual((pro_old["input"], pro_new["input"], pro_new["cache_read"]), (0.435, 0.66, 0.022))
+        self.assertFalse(pricing.is_unknown_model("deepseek-flash", self.p))
 
     def test_grok_4_6_priced_explicitly(self):
         # grok-4.6 必须走精确价目（cache_read $0.50），不能再兜底套 4.5 的 $0.30
@@ -312,9 +356,13 @@ class TestNormalization(unittest.TestCase):
     def test_cursor_dashboard_model_names(self):
         grok46 = pricing.rates_for_model("grok-4.6", self.p)
         grok45 = pricing.rates_for_model("grok-4.5", self.p)
-        for model in ("cursor-grok-4.6-high-fast", "cursor-grok-4.6-high", "cursor.grok-4.6-xhigh"):
+        for model in ("cursor-grok-4.6-high", "cursor.grok-4.6-xhigh"):
             self.assertFalse(pricing.is_unknown_model(model, self.p), model)
             self.assertEqual(pricing.rates_for_model(model, self.p)["cache_read"], grok46["cache_read"], model)
+        # Fast 是 2 倍价档（Cursor 公布 4.6 Fast $4/$1/$12），不能按基础价算
+        fast = pricing.rates_for_model("cursor-grok-4.6-high-fast", self.p)
+        self.assertEqual((fast["input"], fast["cache_read"], fast["output"]), (4.0, 1.0, 12.0))
+        self.assertTrue(pricing.is_unknown_model("grok-4.5-high-fast", self.p))
         self.assertEqual(
             pricing.rates_for_model("cursor-grok-4.5-high", self.p)["cache_read"],
             grok45["cache_read"],

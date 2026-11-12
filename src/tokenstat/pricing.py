@@ -12,6 +12,7 @@ model 归一化策略（recon 实测约束）：
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from functools import lru_cache
 from pathlib import Path
@@ -89,6 +90,11 @@ def _raw_for_model(model: str, pricing: dict) -> Optional[dict]:
             return models.get("claude-opus-5-5-fast")
         if clean in models:
             return models[clean]
+        dated = re.sub(r"-20\d{6}$", "", clean)  # claude-opus-4-1-20250805 → claude-opus-4-1
+        if dated != clean:
+            dated = "claude-opus-4-0" if dated == "claude-opus-4" else dated
+            if dated in models:
+                return models[dated]
         if clean == "claude-opus-4-20":
             return models.get("claude-opus-4-0")
         known_suffixes = {"low", "thinking-xhigh", "thinking-high", "thinking-max-fast", "thinking-max"}
@@ -96,11 +102,10 @@ def _raw_for_model(model: str, pricing: dict) -> Optional[dict]:
             if clean.startswith(known + "-") and clean[len(known) + 1:] in known_suffixes:
                 return models[known]
         return None  # 未核价的新版本不能静默继承更便宜的 Opus 5.5
-    # Grok 4.7 Fast 是独立价档；先挡住未知 Fast 变体，不能被通用前缀截走。
-    if clean.startswith("grok-4.7") and "-fast" in clean:
-        if clean in ("grok-4.7-fast", "grok-4.7-build-fast", "grok-4.7-xhigh-fast", "grok-4.7-high-fast"):
-            return models.get("grok-4.7-fast")
-        return None
+    # Grok Fast 是独立价档（约 2 倍）；先挡住未知 Fast 变体，不能被基础型号的前缀截走。
+    if clean.startswith("grok-4") and "-fast" in clean:
+        m = re.match(r"grok-(4\.\d+)(?:-(?:build|xhigh|high))?-fast$", clean)
+        return models.get(f"grok-{m.group(1)}-fast") if m else None
     if clean in models:
         return models[clean]
 
@@ -111,6 +116,9 @@ def _raw_for_model(model: str, pricing: dict) -> Optional[dict]:
         rest = clean[len(cand):]
         # gpt-5 不能抢走 gpt-5.7；已带版本号的键（gpt-5.5）仍可当前缀
         if rest.startswith(".") and "." not in cand:
+            continue
+        # claude-fable-5-2 不能被 claude-fable-5 截走；8 位日期后缀（-20251001）不受影响
+        if re.match(r"-\d{1,2}(?!\d)", rest):
             continue
         best = cand
     if best:
@@ -127,7 +135,7 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
         return None
 
     if clean.startswith("claude-fable") or clean.startswith("claude-mythos"):
-        return pick("claude-fable-5-1", "claude-mythos-5-1", "claude-fable-5", "claude-mythos-5")
+        return pick("claude-fable-5-2", "claude-mythos-5-2", "claude-fable-5-1", "claude-mythos-5-1", "claude-fable-5", "claude-mythos-5")
     if clean.startswith("claude-opus-4-1"):
         return pick("claude-opus-4-1")
     if clean.startswith(("claude-opus-4-0", "claude-opus-4-20")):
@@ -145,7 +153,17 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
     if clean.startswith("gpt-5-codex") or clean == "codex-auto-review":
         return pick("gpt-5.3-codex", "gpt-5-codex")
     if clean.startswith("gpt-6"):
-        return pick("gpt-6-astra", "gpt-6-sol", "gpt-6-luna")
+        # Sol / Terra / Luna / Astra 是不同价档（价差 10 倍以上），按档位归到该档最新已知价；
+        # 认不出档位返回 None（fail loud），不能默认按最贵或最便宜的算。
+        for tier, keys in (
+            ("sol", ("gpt-6.1-sol", "gpt-6-sol")),
+            ("terra", ("gpt-6.1-terra",)),
+            ("luna", ("gpt-6-luna",)),
+            ("astra", ("gpt-6-astra",)),
+        ):
+            if tier in clean:
+                return pick(*keys)
+        return None
     if clean.startswith("gpt-5.6-sol") or clean.startswith("gpt-daybreak-blue"):
         return pick("gpt-daybreak-blue", "gpt-5.6-sol", "gpt-5.5")
     if clean.startswith("gpt-5.6-terra"):
@@ -165,10 +183,9 @@ def _family_rates(clean: str, models: dict, default: dict) -> Optional[dict]:
         return pick("composer-2.5-fast", "composer-2.5")
     if clean.startswith("gemini-3.7"):
         return pick("gemini-3.7-flash", "gemini-2.5-flash")
-    if clean.startswith("gemini-2.5-flash") or clean.startswith("gemini-2.5"):
+    if clean.startswith("gemini-2.5-flash"):
         return pick("gemini-2.5-flash")
-    if clean.startswith("gemini"):
-        return pick("gemini-3.7-flash", "gemini-2.5-flash")
+    # 其它 Gemini（2.5-pro、3.5-flash-lite、4 系…）价档各不相同，没有明确条目就 fail loud
     return None
 
 
@@ -281,6 +298,17 @@ def is_unknown_model(model: str, pricing: dict) -> bool:
     if _is_placeholder_model(model):
         return False
     return _raw_for_model(model, pricing) is None
+
+
+def priced_as(model: str, pricing: dict) -> Optional[str]:
+    """模型没有精确价目条目、借相近型号估价时，返回借用的条目名；精确命中/未知/占位返回 None。"""
+    if _is_placeholder_model(model):
+        return None
+    raw = _raw_for_model(model, pricing)
+    models = _merged_models(pricing)
+    if raw is None or _clean_model(model) in models:
+        return None
+    return next((k for k, v in models.items() if v is raw), None)
 
 
 def cost_for(
